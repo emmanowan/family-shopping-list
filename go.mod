@@ -1,6 +1,6 @@
 module github.com/yourusername/family-shopping-list
 
-go 1.25.7
+go 1.25
 
 require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
