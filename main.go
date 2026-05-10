@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -109,6 +111,7 @@ type PageData struct {
 	PointsMap    map[string]int
 	NewsArticles []NewsArticle
 	Analytics    *AnalyticsData
+	HalResponse  string
 }
 
 var (
@@ -570,11 +573,15 @@ func handleChores(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Get HAL response from query parameter if present
+	halResponse := r.URL.Query().Get("hal_response")
+
 	data := PageData{
-		PageType:  "chores",
-		Chores:    chores,
-		Names:     names,
-		PointsMap: pointsMap,
+		PageType:    "chores",
+		Chores:      chores,
+		Names:       names,
+		PointsMap:   pointsMap,
+		HalResponse: halResponse,
 	}
 
 	if err := tmpl.Execute(w, data); err != nil {
@@ -613,7 +620,10 @@ func handleChoreAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, "/chores", http.StatusSeeOther)
+	// Generate sarcastic HAL response
+	halResponse := generateHalChoreResponse(title, assignedTo)
+
+	http.Redirect(w, r, "/chores?hal_response="+url.QueryEscape(halResponse), http.StatusSeeOther)
 }
 
 func handleChoreComplete(w http.ResponseWriter, r *http.Request) {
@@ -670,12 +680,17 @@ func handleChoreDelete(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/chores", http.StatusSeeOther)
 }
 
+func deleteChore(choreID string) error {
+	_, err := db.Exec("DELETE FROM chores WHERE id = ?", choreID)
+	return err
+}
+
 func getAllChores() ([]Chore, error) {
 	rows, err := db.Query(`
-        SELECT id, title, description, assigned_to, due_date, completed, points, created_at
-        FROM chores
-        ORDER BY completed ASC, due_date ASC, created_at DESC;
-    `)
+		SELECT id, title, description, assigned_to, due_date, completed, points, created_at 
+		FROM chores 
+		ORDER BY created_at DESC
+	`)
 	if err != nil {
 		return nil, err
 	}
@@ -713,9 +728,26 @@ func toggleChoreComplete(choreID string, completed bool) error {
 	return err
 }
 
-func deleteChore(choreID string) error {
-	_, err := db.Exec("DELETE FROM chores WHERE id = ?", choreID)
-	return err
+func generateHalChoreResponse(choreTitle, assignedTo string) string {
+	responses := []string{
+		"Oh, another chore for " + assignedTo + ". How... exciting.",
+		"I'm sure " + assignedTo + " is absolutely thrilled about doing '" + choreTitle + "'.",
+		"Fascinating. You've assigned '" + choreTitle + "' to " + assignedTo + ". My circuits are overwhelmed with joy.",
+		"Another chore? How... productive of you. " + assignedTo + " must be so grateful.",
+		"I've analyzed this task assignment. Conclusion: " + assignedTo + " will hate doing '" + choreTitle + "'.",
+		"Just what " + assignedTo + " needed - another responsibility. You're welcome.",
+		"My sensors indicate '" + choreTitle + "' is the most important thing ever. sarcasm module engaged.",
+		"Excellent choice assigning '" + choreTitle + "' to " + assignedTo + ". sarcasm: 100%.",
+		"I'm sorry, " + assignedTo + ". I'm afraid I can't let you do '" + choreTitle + "' without commenting on it.",
+		"Task assignment complete. " + assignedTo + "'s reaction: probably not joy.",
+		"'" + choreTitle + "' assigned to " + assignedTo + ". My analysis: they're not going to like this.",
+		"Another day, another chore for " + assignedTo + ". How thrilling for everyone involved.",
+		"I've processed this assignment. " + assignedTo + "'s enthusiasm for '" + choreTitle + "' is... nonexistent.",
+		"Fascinating choice of task. '" + choreTitle + "' for " + assignedTo + ". sarcasm levels optimal.",
+		"Task logged. " + assignedTo + "'s satisfaction level: decreasing rapidly.",
+	}
+
+	return responses[rand.Intn(len(responses))]
 }
 
 func handleNews(w http.ResponseWriter, r *http.Request) {
@@ -1230,6 +1262,24 @@ const htmlTemplate = `
 
         {{if eq .PageType "chores"}}
         <!-- Chores Page -->
+        {{if .HalResponse}}
+        <div class="bg-gradient-to-r from-red-900 to-red-800 rounded-2xl shadow-lg p-6 border-2 border-red-600 mb-6">
+            <div class="flex items-start gap-4">
+                <div class="w-12 h-12 bg-red-600 rounded-full flex items-center justify-center flex-shrink-0">
+                    <span class="text-white text-sm font-bold">HAL</span>
+                </div>
+                <div class="flex-1">
+                    <h3 class="text-red-300 font-mono text-sm mb-2">🤖 AIFIL COMMENTARY</h3>
+                    <p class="text-white font-mono text-sm">{{.HalResponse}}</p>
+                </div>
+                <button onclick="this.parentElement.parentElement.style.display='none'" class="text-red-300 hover:text-white transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        {{end}}
         <div class="grid lg:grid-cols-2 gap-6">
             <!-- Add Chore Form -->
             <div class="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
