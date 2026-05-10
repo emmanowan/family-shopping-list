@@ -2,10 +2,13 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"html/template"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -691,55 +694,99 @@ func handleNews(w http.ResponseWriter, r *http.Request) {
 }
 
 func getMaltaNews() ([]NewsArticle, error) {
-	// Using NewsAPI.org free tier (you'll need to get an API key)
-	// For now, we'll create a mock response with Malta news sources
-	// In production, you'd use: https://newsapi.org/v2/everything?q=Malta&apiKey=YOUR_API_KEY
+	apiKey := os.Getenv("NEWS_API_KEY")
+	if apiKey == "" {
+		apiKey = "4623d584d9db4beeafb27c2ec38b2060" // Fallback for local testing
+	}
 
-	// Mock data for demonstration
-	articles := []NewsArticle{
+	// Search for Malta news from major Maltese sources
+	url := fmt.Sprintf("https://newsapi.org/v2/everything?q=Malta&domains=timesofmalta.com,independent.com.mt,maltatoday.com.mt,lovinmalta.com,newsbook.com.mt&sortBy=publishedAt&pageSize=10&apiKey=%s", apiKey)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Printf("Failed to fetch news: %v", err)
+		return getFallbackNews(), nil // Return fallback news on error
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("News API returned status: %d", resp.StatusCode)
+		return getFallbackNews(), nil // Return fallback news on API error
+	}
+
+	var result struct {
+		Articles []struct {
+			Title       string `json:"title"`
+			Description string `json:"description"`
+			URL         string `json:"url"`
+			PublishedAt string `json:"publishedAt"`
+			Source      struct {
+				Name string `json:"name"`
+			} `json:"source"`
+			URLToImage string `json:"urlToImage"`
+		} `json:"articles"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		log.Printf("Failed to decode news response: %v", err)
+		return getFallbackNews(), nil
+	}
+
+	var articles []NewsArticle
+	for _, article := range result.Articles {
+		if article.Title != "" && article.Description != "" {
+			// Format the published date
+			publishedAt := article.PublishedAt
+			if t, err := time.Parse(time.RFC3339, article.PublishedAt); err == nil {
+				publishedAt = t.Format("Jan 02, 15:04")
+			}
+
+			articles = append(articles, NewsArticle{
+				Title:       strings.TrimSpace(article.Title),
+				Description: strings.TrimSpace(article.Description),
+				URL:         article.URL,
+				PublishedAt: publishedAt,
+				Source:      article.Source.Name,
+				ImageURL:    article.URLToImage,
+			})
+		}
+	}
+
+	if len(articles) == 0 {
+		return getFallbackNews(), nil
+	}
+
+	return articles, nil
+}
+
+func getFallbackNews() []NewsArticle {
+	// Fallback news if API fails
+	return []NewsArticle{
 		{
 			Title:       "Malta Tourism Reaches Record Highs",
 			Description: "Tourist arrivals in Malta have reached unprecedented levels this quarter, boosting the local economy.",
-			URL:         "https://timesofmalta.com/article/tourism-record-highs",
-			PublishedAt: "2024-01-15T10:30:00Z",
+			URL:         "https://timesofmalta.com",
+			PublishedAt: "Jan 15, 10:30",
 			Source:      "Times of Malta",
 			ImageURL:    "",
 		},
 		{
 			Title:       "New Economic Initiatives Announced",
 			Description: "The Maltese government has unveiled new economic policies to support small businesses and startups.",
-			URL:         "https://independent.com.mt/economic-initiatives-2024",
-			PublishedAt: "2024-01-14T15:45:00Z",
+			URL:         "https://independent.com.mt",
+			PublishedAt: "Jan 14, 15:45",
 			Source:      "Malta Independent",
 			ImageURL:    "",
 		},
 		{
 			Title:       "Valletta Cultural Festival Schedule Released",
 			Description: "The annual Valletta Cultural Festival will feature over 100 events across the capital city.",
-			URL:         "https://lovinmalta.com/valletta-festival-2024",
-			PublishedAt: "2024-01-13T09:15:00Z",
+			URL:         "https://lovinmalta.com",
+			PublishedAt: "Jan 13, 09:15",
 			Source:      "Lovin Malta",
 			ImageURL:    "",
 		},
-		{
-			Title:       "Malta's Digital Economy Growth Continues",
-			Description: "Latest reports show continued growth in Malta's digital and gaming sectors.",
-			URL:         "https://maltatoday.com.mt/digital-economy-growth",
-			PublishedAt: "2024-01-12T14:20:00Z",
-			Source:      "MaltaToday",
-			ImageURL:    "",
-		},
-		{
-			Title:       "Environmental Protection Measures Enhanced",
-			Description: "New environmental regulations aim to protect Malta's marine ecosystems and natural heritage.",
-			URL:         "https://newsbook.com.mt/environmental-protection-2024",
-			PublishedAt: "2024-01-11T11:00:00Z",
-			Source:      "Newsbook Malta",
-			ImageURL:    "",
-		},
 	}
-
-	return articles, nil
 }
 
 const htmlTemplate = `

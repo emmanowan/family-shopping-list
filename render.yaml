@@ -10,3 +10,5 @@ services:
         value: 10000
       - key: DATABASE_URL
         value: sqlite://./shopping_list.db
+      - key: NEWS_API_KEY
+        value: 4623d584d9db4beeafb27c2ec38b2060
