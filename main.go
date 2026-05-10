@@ -52,6 +52,7 @@ type PageData struct {
 	Names       []string
 	DinnerPoll  *DinnerPoll
 	Chores      []Chore
+	PointsMap   map[string]int
 }
 
 var (
@@ -499,9 +500,18 @@ func handleChores(w http.ResponseWriter, r *http.Request) {
 		log.Printf("failed to load names: %v", err)
 	}
 
+	// Calculate points for each person
+	pointsMap := make(map[string]int)
+	for _, chore := range chores {
+		if chore.Completed {
+			pointsMap[chore.AssignedTo] += chore.Points
+		}
+	}
+
 	data := PageData{
-		Chores: chores,
-		Names:  names,
+		Chores:    chores,
+		Names:     names,
+		PointsMap: pointsMap,
 	}
 
 	if err := tmpl.Execute(w, data); err != nil {
@@ -766,17 +776,9 @@ const htmlTemplate = `
                 <div class="mt-4 pt-4 border-t border-gray-200">
                     <h3 class="text-sm font-semibold text-gray-700 mb-2">Points Leaderboard</h3>
                     <div class="flex flex-wrap gap-2">
-                        {{$chores := .Chores}}
-                        {{range .Names}}
-                        {{$name := .}}
-                        {{$points := 0}}
-                        {{range $chores}}
-                        {{if and (eq .AssignedTo $name) .Completed}}
-                        {{$points = add $points .Points}}
-                        {{end}}
-                        {{end}}
+                        {{range $name, $points := .PointsMap}}
                         {{if gt $points 0}}
-                        <span class="px-3 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full font-medium">{{.}}: {{$points}} pts</span>
+                        <span class="px-3 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full font-medium">{{$name}}: {{$points}} pts</span>
                         {{end}}
                         {{end}}
                     </div>
