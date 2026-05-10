@@ -1258,6 +1258,9 @@ const htmlTemplate = `
             <a href="/pacman" class="px-6 py-2 bg-white rounded-full shadow-md text-gray-700 hover:bg-yellow-50 hover:text-yellow-600 transition-colors {{if eq .PageType "pacman"}}bg-yellow-100 text-yellow-700{{end}}">
                 🎮 Pac-Man
             </a>
+            <a href="/hal" class="px-6 py-2 bg-white rounded-full shadow-md text-gray-700 hover:bg-red-50 hover:text-red-600 transition-colors {{if eq .PageType "hal"}}bg-red-100 text-red-700{{end}}">
+                🤖 HAL 9000
+            </a>
         </nav>
 
         {{if eq .PageType "chores"}}
