@@ -1,14 +1,14 @@
 package main
 
 import (
-	"context"
+	"database/sql"
 	"html/template"
 	"log"
 	"net/http"
 	"os"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	_ "modernc.org/sqlite"
 )
 
 type Item struct {
@@ -21,30 +21,40 @@ type ListDate struct {
 	Date string
 }
 
+type DinnerOption struct {
+	ID        int
+	Option    string
+	VoteCount int
+}
+
+type DinnerPoll struct {
+	ID      int
+	Date    string
+	Options []DinnerOption
+	Active  bool
+}
+
 type PageData struct {
 	CurrentDate string
 	Items       []Item
 	Dates       []ListDate
 	Message     string
+	Names       []string
+	DinnerPoll  *DinnerPoll
 }
 
 var (
-	db   *pgxpool.Pool
+	db   *sql.DB
 	tmpl *template.Template
-	ctx  = context.Background()
 )
 
 func main() {
-	// DATABASE_URL must be set (Render will set it for the managed Postgres)
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		log.Fatal("DATABASE_URL is not set")
-	}
-
+	// Use SQLite database file
+	dbPath := "shopping_list.db"
 	var err error
-	db, err = pgxpool.New(ctx, dbURL)
+	db, err = sql.Open("sqlite", dbPath)
 	if err != nil {
-		log.Fatalf("failed to connect to database: %v", err)
+		log.Fatalf("failed to open database: %v", err)
 	}
 	defer db.Close()
 
@@ -57,10 +67,13 @@ func main() {
 	http.HandleFunc("/", handleIndex)
 	http.HandleFunc("/add", handleAdd)
 	http.HandleFunc("/history", handleHistory)
+	http.HandleFunc("/dinner/create", handleDinnerCreate)
+	http.HandleFunc("/dinner/vote", handleDinnerVote)
+	http.HandleFunc("/dinner/wheel", handleDinnerWheel)
 
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "3000"
 	}
 
 	log.Printf("Listening on :%s", port)
@@ -70,18 +83,36 @@ func main() {
 }
 
 func migrate() error {
-	_, err := db.Exec(ctx, `
+	_, err := db.Exec(`
         CREATE TABLE IF NOT EXISTS lists (
-            id SERIAL PRIMARY KEY,
-            list_date DATE NOT NULL UNIQUE
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            list_date TEXT NOT NULL UNIQUE
         );
 
         CREATE TABLE IF NOT EXISTS items (
-            id SERIAL PRIMARY KEY,
-            list_id INT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            list_id INTEGER NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
             first_name TEXT NOT NULL,
             item TEXT NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS dinner_polls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL UNIQUE,
+            active INTEGER NOT NULL DEFAULT 1
+        );
+
+        CREATE TABLE IF NOT EXISTS dinner_options (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            poll_id INTEGER NOT NULL REFERENCES dinner_polls(id) ON DELETE CASCADE,
+            option_name TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS dinner_votes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            option_id INTEGER NOT NULL REFERENCES dinner_options(id) ON DELETE CASCADE,
+            voter_name TEXT NOT NULL
         );
     `)
 	return err
@@ -105,10 +136,23 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	names, err := getUniqueNames()
+	if err != nil {
+		http.Error(w, "failed to load names", http.StatusInternalServerError)
+		return
+	}
+
+	dinnerPoll, err := getDinnerPoll(dateStr)
+	if err != nil {
+		log.Printf("failed to load dinner poll: %v", err)
+	}
+
 	data := PageData{
 		CurrentDate: dateStr,
 		Items:       items,
 		Dates:       dates,
+		Names:       names,
+		DinnerPoll:  dinnerPoll,
 	}
 
 	if err := tmpl.Execute(w, data); err != nil {
@@ -155,8 +199,15 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	names, err := getUniqueNames()
+	if err != nil {
+		http.Error(w, "failed to load names", http.StatusInternalServerError)
+		return
+	}
+
 	data := PageData{
 		Dates: dates,
+		Names: names,
 	}
 
 	if err := tmpl.Execute(w, data); err != nil {
@@ -166,12 +217,27 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 
 func getOrCreateListID(dateStr string) (int, error) {
 	var id int
-	err := db.QueryRow(ctx, `
+	err := db.QueryRow(`
         INSERT INTO lists (list_date)
-        VALUES ($1)
-        ON CONFLICT (list_date) DO UPDATE SET list_date = EXCLUDED.list_date
+        VALUES (?)
+        ON CONFLICT(list_date) DO UPDATE SET list_date = excluded.list_date
         RETURNING id;
     `, dateStr).Scan(&id)
+	if err != nil {
+		// If ON CONFLICT doesn't work, try a simpler approach
+		var existingID int
+		err := db.QueryRow("SELECT id FROM lists WHERE list_date = ?", dateStr).Scan(&existingID)
+		if err == nil {
+			return existingID, nil
+		}
+		// Insert new record
+		result, err := db.Exec("INSERT INTO lists (list_date) VALUES (?)", dateStr)
+		if err != nil {
+			return 0, err
+		}
+		lastID, _ := result.LastInsertId()
+		return int(lastID), nil
+	}
 	return id, err
 }
 
@@ -181,19 +247,19 @@ func addItem(firstName, item, dateStr string) error {
 		return err
 	}
 
-	_, err = db.Exec(ctx, `
+	_, err = db.Exec(`
         INSERT INTO items (list_id, first_name, item)
-        VALUES ($1, $2, $3);
+        VALUES (?, ?, ?);
     `, listID, firstName, item)
 	return err
 }
 
 func getItemsByDate(dateStr string) ([]Item, error) {
-	rows, err := db.Query(ctx, `
+	rows, err := db.Query(`
         SELECT i.first_name, i.item, i.created_at
         FROM items i
         JOIN lists l ON i.list_id = l.id
-        WHERE l.list_date = $1
+        WHERE l.list_date = ?
         ORDER BY i.created_at ASC;
     `, dateStr)
 	if err != nil {
@@ -204,8 +270,13 @@ func getItemsByDate(dateStr string) ([]Item, error) {
 	var items []Item
 	for rows.Next() {
 		var it Item
-		if err := rows.Scan(&it.FirstName, &it.Item, &it.CreatedAt); err != nil {
+		var createdAtStr string
+		if err := rows.Scan(&it.FirstName, &it.Item, &createdAtStr); err != nil {
 			return nil, err
+		}
+		// Parse the timestamp string
+		if createdAt, err := time.Parse("2006-01-02 15:04:05", createdAtStr); err == nil {
+			it.CreatedAt = createdAt
 		}
 		items = append(items, it)
 	}
@@ -213,7 +284,7 @@ func getItemsByDate(dateStr string) ([]Item, error) {
 }
 
 func getAllDates() ([]ListDate, error) {
-	rows, err := db.Query(ctx, `
+	rows, err := db.Query(`
         SELECT list_date
         FROM lists
         ORDER BY list_date DESC;
@@ -225,81 +296,493 @@ func getAllDates() ([]ListDate, error) {
 
 	var dates []ListDate
 	for rows.Next() {
-		var d time.Time
-		if err := rows.Scan(&d); err != nil {
+		var dateStr string
+		if err := rows.Scan(&dateStr); err != nil {
 			return nil, err
 		}
-		dates = append(dates, ListDate{Date: d.Format("2006-01-02")})
+		dates = append(dates, ListDate{Date: dateStr})
 	}
 	return dates, rows.Err()
 }
 
+func getUniqueNames() ([]string, error) {
+	rows, err := db.Query(`
+        SELECT DISTINCT first_name
+        FROM items
+        ORDER BY first_name ASC;
+    `)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
+}
+
+func getDinnerPoll(dateStr string) (*DinnerPoll, error) {
+	var poll DinnerPoll
+	err := db.QueryRow("SELECT id, date, active FROM dinner_polls WHERE date = ?", dateStr).Scan(&poll.ID, &poll.Date, &poll.Active)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	rows, err := db.Query(`
+        SELECT id, option_name,
+               (SELECT COUNT(*) FROM dinner_votes WHERE option_id = dinner_options.id) as vote_count
+        FROM dinner_options
+        WHERE poll_id = ?
+        ORDER BY vote_count DESC, option_name ASC;
+    `, poll.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var options []DinnerOption
+	for rows.Next() {
+		var opt DinnerOption
+		if err := rows.Scan(&opt.ID, &opt.Option, &opt.VoteCount); err != nil {
+			return nil, err
+		}
+		options = append(options, opt)
+	}
+	poll.Options = options
+	return &poll, rows.Err()
+}
+
+func handleDinnerCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+
+	dateStr := r.FormValue("date")
+	if dateStr == "" {
+		dateStr = time.Now().Format("2006-01-02")
+	}
+
+	optionName := r.FormValue("option")
+	if optionName == "" {
+		http.Redirect(w, r, "/?date="+dateStr, http.StatusSeeOther)
+		return
+	}
+
+	if err := createDinnerOption(dateStr, optionName); err != nil {
+		log.Printf("createDinnerOption error: %v", err)
+		http.Error(w, "failed to create option", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, "/?date="+dateStr, http.StatusSeeOther)
+}
+
+func handleDinnerVote(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+
+	dateStr := r.FormValue("date")
+	if dateStr == "" {
+		dateStr = time.Now().Format("2006-01-02")
+	}
+
+	optionID := r.FormValue("option_id")
+	voterName := r.FormValue("voter_name")
+
+	if optionID == "" || voterName == "" {
+		http.Redirect(w, r, "/?date="+dateStr, http.StatusSeeOther)
+		return
+	}
+
+	if err := castDinnerVote(optionID, voterName); err != nil {
+		log.Printf("castDinnerVote error: %v", err)
+		http.Error(w, "failed to cast vote", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, "/?date="+dateStr, http.StatusSeeOther)
+}
+
+func createDinnerOption(dateStr, optionName string) error {
+	var pollID int
+	err := db.QueryRow(`
+        INSERT INTO dinner_polls (date, active)
+        VALUES (?, 1)
+        ON CONFLICT(date) DO UPDATE SET active = active
+        RETURNING id;
+    `, dateStr).Scan(&pollID)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec("INSERT INTO dinner_options (poll_id, option_name) VALUES (?, ?)", pollID, optionName)
+	return err
+}
+
+func castDinnerVote(optionID, voterName string) error {
+	_, err := db.Exec("INSERT INTO dinner_votes (option_id, voter_name) VALUES (?, ?)", optionID, voterName)
+	return err
+}
+
+func handleDinnerWheel(w http.ResponseWriter, r *http.Request) {
+	dateStr := r.URL.Query().Get("date")
+	if dateStr == "" {
+		dateStr = time.Now().Format("2006-01-02")
+	}
+
+	dinnerPoll, err := getDinnerPoll(dateStr)
+	if err != nil {
+		log.Printf("failed to load dinner poll: %v", err)
+	}
+
+	tmpl.Execute(w, PageData{
+		CurrentDate: dateStr,
+		DinnerPoll:  dinnerPoll,
+	})
+}
+
 const htmlTemplate = `
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Family Shopping List</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body { font-family: sans-serif; max-width: 700px; margin: 20px auto; }
-        h1, h2 { margin-bottom: 0.3em; }
-        form { margin-bottom: 1em; }
-        label { display: block; margin-top: 0.5em; }
-        input[type="text"], input[type="date"] { width: 100%; padding: 0.4em; }
-        button { margin-top: 0.7em; padding: 0.4em 0.8em; }
-        table { width: 100%; border-collapse: collapse; margin-top: 1em; }
-        th, td { border-bottom: 1px solid #ddd; padding: 0.4em; text-align: left; }
-        .date-list a { text-decoration: none; }
+        body { font-family: 'Inter', sans-serif; }
     </style>
 </head>
-<body>
-    <h1>Family Shopping List</h1>
+<body class="bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 min-h-screen">
+    <div class="max-w-4xl mx-auto px-4 py-8">
+        <!-- Header -->
+        <header class="text-center mb-8">
+            <div class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl mb-4 shadow-lg">
+                <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
+                </svg>
+            </div>
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">Family Shopping List</h1>
+            <p class="text-gray-600">Keep track of what your family needs</p>
+        </header>
 
-    <h2>Add item</h2>
-    <form method="POST" action="/add">
-        <label>
-            Date:
-            <input type="date" name="date" value="{{.CurrentDate}}">
-        </label>
-        <label>
-            First name:
-            <input type="text" name="first_name" required>
-        </label>
-        <label>
-            Item needed:
-            <input type="text" name="item" required>
-        </label>
-        <button type="submit">Add</button>
-    </form>
+        <div class="grid lg:grid-cols-3 gap-6">
+            <!-- Left Column: Dinner Poll & Add Item Form -->
+            <div class="lg:col-span-1 space-y-6">
+                <!-- Dinner Poll -->
+                <div class="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
+                    <h2 class="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        What's for Dinner?
+                    </h2>
+                    <p class="text-gray-600 text-sm mb-4">Vote on tonight's dinner options</p>
+                    
+                    {{if .DinnerPoll}}
+                    <div class="overflow-hidden rounded-lg border border-gray-200 mb-4">
+                        <table class="w-full">
+                            <thead class="bg-orange-50">
+                                <tr>
+                                    <th class="px-4 py-2 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Option</th>
+                                    <th class="px-4 py-2 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Votes</th>
+                                    <th class="px-4 py-2 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Vote</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-200">
+                                {{range .DinnerPoll.Options}}
+                                <tr class="hover:bg-orange-50 transition-colors">
+                                    <td class="px-4 py-2 text-sm font-medium text-gray-800">{{.Option}}</td>
+                                    <td class="px-4 py-2 text-sm text-orange-600 font-semibold">{{.VoteCount}}</td>
+                                    <td class="px-4 py-2">
+                                        <form method="POST" action="/dinner/vote" class="flex gap-1">
+                                            <input type="hidden" name="date" value="{{$.CurrentDate}}">
+                                            <input type="hidden" name="option_id" value="{{.ID}}">
+                                            <input type="text" name="voter_name" list="name-list" placeholder="Your name" required
+                                                class="flex-1 px-2 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-orange-500 focus:border-orange-500 transition-colors">
+                                            <button type="submit" class="px-2 py-1 bg-orange-500 text-white text-xs rounded hover:bg-orange-600 transition-colors">
+                                                Vote
+                                            </button>
+                                        </form>
+                                    </td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
 
-    <h2>Items for {{.CurrentDate}}</h2>
-    {{if .Items}}
-    <table>
-        <tr>
-            <th>Time</th>
-            <th>Who</th>
-            <th>Item</th>
-        </tr>
-        {{range .Items}}
-        <tr>
-            <td>{{.CreatedAt.Format "15:04"}}</td>
-            <td>{{.FirstName}}</td>
-            <td>{{.Item}}</td>
-        </tr>
-        {{end}}
-    </table>
-    {{else}}
-    <p>No items yet for this date.</p>
-    {{end}}
+                    <!-- Spin the Wheel -->
+                    <div class="bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl p-4 border border-purple-100 mb-4">
+                        <h3 class="text-lg font-semibold text-gray-800 mb-3 text-center">Spin the Wheel!</h3>
+                        <div class="relative flex justify-center">
+                            <canvas id="wheelCanvas" width="200" height="200" class="rounded-full shadow-lg"></canvas>
+                            <div class="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-2 text-purple-600 text-2xl">▼</div>
+                        </div>
+                        <button onclick="spinWheel()" class="w-full mt-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white font-medium py-2 px-4 rounded-lg hover:from-purple-600 hover:to-pink-600 transition-all shadow-md">
+                            🎲 Spin!
+                        </button>
+                        <div id="wheelResult" class="mt-3 text-center text-lg font-bold text-purple-700 hidden"></div>
+                    </div>
 
-    <h2>Past lists</h2>
-    <ul class="date-list">
-        {{range .Dates}}
-        <li><a href="/?date={{.Date}}">{{.Date}}</a></li>
-        {{else}}
-        <li>No history yet.</li>
-        {{end}}
-    </ul>
+                    <script>
+                        const dinnerOptions = [{{range .DinnerPoll.Options}}"{{.Option}}",{{end}}];
+                        const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2'];
+                        
+                        function drawWheel() {
+                            const canvas = document.getElementById('wheelCanvas');
+                            if (!canvas) return;
+                            const ctx = canvas.getContext('2d');
+                            const centerX = canvas.width / 2;
+                            const centerY = canvas.height / 2;
+                            const radius = 90;
+                            
+                            ctx.clearRect(0, 0, canvas.width, canvas.height);
+                            
+                            if (dinnerOptions.length === 0) {
+                                ctx.fillStyle = '#ccc';
+                                ctx.beginPath();
+                                ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+                                ctx.fill();
+                                return;
+                            }
+                            
+                            const sliceAngle = (2 * Math.PI) / dinnerOptions.length;
+                            
+                            for (let i = 0; i < dinnerOptions.length; i++) {
+                                ctx.beginPath();
+                                ctx.moveTo(centerX, centerY);
+                                ctx.arc(centerX, centerY, radius, i * sliceAngle, (i + 1) * sliceAngle);
+                                ctx.closePath();
+                                ctx.fillStyle = colors[i % colors.length];
+                                ctx.fill();
+                                ctx.strokeStyle = '#fff';
+                                ctx.lineWidth = 2;
+                                ctx.stroke();
+                                
+                                // Add text
+                                ctx.save();
+                                ctx.translate(centerX, centerY);
+                                ctx.rotate(i * sliceAngle + sliceAngle / 2);
+                                ctx.textAlign = 'right';
+                                ctx.fillStyle = '#fff';
+                                ctx.font = 'bold 12px Inter, sans-serif';
+                                ctx.fillText(dinnerOptions[i].substring(0, 15), radius - 10, 4);
+                                ctx.restore();
+                            }
+                            
+                            // Center circle
+                            ctx.beginPath();
+                            ctx.arc(centerX, centerY, 20, 0, 2 * Math.PI);
+                            ctx.fillStyle = '#fff';
+                            ctx.fill();
+                            ctx.strokeStyle = '#9333EA';
+                            ctx.lineWidth = 3;
+                            ctx.stroke();
+                        }
+                        
+                        let currentRotation = 0;
+                        
+                        function spinWheel() {
+                            if (dinnerOptions.length === 0) {
+                                document.getElementById('wheelResult').textContent = 'Add dinner options first!';
+                                document.getElementById('wheelResult').classList.remove('hidden');
+                                return;
+                            }
+                            
+                            const canvas = document.getElementById('wheelCanvas');
+                            const spins = 5 + Math.random() * 5;
+                            const extraRotation = Math.random() * 2 * Math.PI;
+                            const totalRotation = spins * 2 * Math.PI + extraRotation;
+                            
+                            let start = null;
+                            const duration = 3000;
+                            
+                            function animate(timestamp) {
+                                if (!start) start = timestamp;
+                                const progress = (timestamp - start) / duration;
+                                
+                                if (progress < 1) {
+                                    const easeOut = 1 - Math.pow(1 - progress, 3);
+                                    currentRotation = easeOut * totalRotation;
+                                    canvas.style.transform = 'rotate(' + currentRotation + 'rad)';
+                                    requestAnimationFrame(animate);
+                                } else {
+                                    // Calculate winner
+                                    const sliceAngle = (2 * Math.PI) / dinnerOptions.length;
+                                    const normalizedRotation = totalRotation % (2 * Math.PI);
+                                    const index = Math.floor(dinnerOptions.length - (normalizedRotation / sliceAngle)) % dinnerOptions.length;
+                                    const winner = dinnerOptions[index >= 0 ? index : index + dinnerOptions.length];
+                                    
+                                    document.getElementById('wheelResult').innerHTML = '🎉 <span class="text-pink-600">' + winner + '</span> 🎉';
+                                    document.getElementById('wheelResult').classList.remove('hidden');
+                                }
+                            }
+                            
+                            requestAnimationFrame(animate);
+                        }
+                        
+                        drawWheel();
+                    </script>
+                    {{else}}
+                    <p class="text-gray-500 text-sm mb-4">No dinner options yet. Add one below!</p>
+                    {{end}}
+                    
+                    <form method="POST" action="/dinner/create" class="flex gap-2">
+                        <input type="hidden" name="date" value="{{.CurrentDate}}">
+                        <input type="text" name="option" placeholder="Add dinner option..." required
+                            class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-colors">
+                        <button type="submit" class="px-3 py-2 bg-orange-500 text-white text-sm rounded-lg hover:bg-orange-600 transition-colors">
+                            Add
+                        </button>
+                    </form>
+                </div>
+
+                <div class="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
+                    <h2 class="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                        </svg>
+                        Add Item
+                    </h2>
+                    <form method="POST" action="/add" class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                            <input type="date" name="date" value="{{.CurrentDate}}" 
+                                class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Your Name</label>
+                            <input type="text" name="first_name" list="name-list" placeholder="Enter your name" required
+                                class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors">
+                            <datalist id="name-list">
+                                {{range .Names}}
+                                <option value="{{.}}">{{.}}</option>
+                                {{end}}
+                            </datalist>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Item Needed</label>
+                            <input type="text" name="item" placeholder="What do you need?" required
+                                class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors">
+                        </div>
+                        <button type="submit" 
+                            class="w-full bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-medium py-2.5 px-4 rounded-lg hover:from-blue-600 hover:to-indigo-700 focus:ring-4 focus:ring-indigo-200 transition-all shadow-md">
+                            Add to List
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Past Lists -->
+                <div class="bg-white rounded-2xl shadow-lg p-6 border border-gray-100 mt-6">
+                    <h2 class="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        Past Lists
+                    </h2>
+                    {{if .Dates}}
+                    <ul class="space-y-2">
+                        {{range .Dates}}
+                        <li>
+                            <a href="/?date={{.Date}}" 
+                                class="block px-4 py-2.5 rounded-lg bg-gray-50 hover:bg-indigo-50 text-gray-700 hover:text-indigo-700 transition-colors border border-gray-200 hover:border-indigo-200">
+                                <span class="flex items-center gap-2">
+                                    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                                    </svg>
+                                    {{.Date}}
+                                </span>
+                            </a>
+                        </li>
+                        {{end}}
+                    </ul>
+                    {{else}}
+                    <p class="text-gray-500 text-sm">No history yet.</p>
+                    {{end}}
+                </div>
+            </div>
+
+            <!-- Right Column: Current List -->
+            <div class="lg:col-span-2">
+                <div class="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-xl font-semibold text-gray-800 flex items-center gap-2">
+                            <svg class="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+                            </svg>
+                            Shopping List
+                        </h2>
+                        <span class="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">{{.CurrentDate}}</span>
+                    </div>
+
+                    {{if .Items}}
+                    <div class="overflow-hidden rounded-xl border border-gray-200">
+                        <table class="w-full">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Time</th>
+                                    <th class="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Who</th>
+                                    <th class="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Item</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-200">
+                                {{range .Items}}
+                                <tr class="hover:bg-gray-50 transition-colors">
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 font-mono">{{.CreatedAt.Format "15:04"}}</td>
+                                    <td class="px-6 py-4 whitespace-nowrap">
+                                        <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800">
+                                            {{.FirstName}}
+                                        </span>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-800 font-medium">{{.Item}}</td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
+                    {{else}}
+                    <div class="text-center py-12">
+                        <svg class="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+                        </svg>
+                        <p class="text-gray-500">No items yet for this date.</p>
+                        <p class="text-sm text-gray-400 mt-1">Add your first item to get started!</p>
+                    </div>
+                    {{end}}
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="text-center mt-8 text-gray-500 text-sm">
+            <p>Made with ❤️ for your family</p>
+        </footer>
+    </div>
 </body>
 </html>
 `
