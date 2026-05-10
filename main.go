@@ -35,13 +35,14 @@ type DinnerPoll struct {
 }
 
 type Chore struct {
-	ID         int
-	Title      string
-	AssignedTo string
-	DueDate    string
-	Completed  bool
-	Points     int
-	CreatedAt  time.Time
+	ID          int
+	Title       string
+	Description string
+	AssignedTo  string
+	DueDate     string
+	Completed   bool
+	Points      int
+	CreatedAt   time.Time
 }
 
 type PageData struct {
@@ -134,6 +135,7 @@ func migrate() error {
         CREATE TABLE IF NOT EXISTS chores (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
+            description TEXT,
             assigned_to TEXT NOT NULL,
             due_date TEXT,
             completed INTEGER NOT NULL DEFAULT 0,
@@ -531,6 +533,7 @@ func handleChoreAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	title := r.FormValue("title")
+	description := r.FormValue("description")
 	assignedTo := r.FormValue("assigned_to")
 	dueDate := r.FormValue("due_date")
 	points := r.FormValue("points")
@@ -543,7 +546,7 @@ func handleChoreAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := addChore(title, assignedTo, dueDate, points); err != nil {
+	if err := addChore(title, description, assignedTo, dueDate, points); err != nil {
 		log.Printf("addChore error: %v", err)
 		http.Error(w, "failed to add chore", http.StatusInternalServerError)
 		return
@@ -608,7 +611,7 @@ func handleChoreDelete(w http.ResponseWriter, r *http.Request) {
 
 func getAllChores() ([]Chore, error) {
 	rows, err := db.Query(`
-        SELECT id, title, assigned_to, due_date, completed, points, created_at
+        SELECT id, title, description, assigned_to, due_date, completed, points, created_at
         FROM chores
         ORDER BY completed ASC, due_date ASC, created_at DESC;
     `)
@@ -622,7 +625,7 @@ func getAllChores() ([]Chore, error) {
 		var c Chore
 		var completed int
 		var createdAtStr string
-		if err := rows.Scan(&c.ID, &c.Title, &c.AssignedTo, &c.DueDate, &completed, &c.Points, &createdAtStr); err != nil {
+		if err := rows.Scan(&c.ID, &c.Title, &c.Description, &c.AssignedTo, &c.DueDate, &completed, &c.Points, &createdAtStr); err != nil {
 			return nil, err
 		}
 		c.Completed = completed == 1
@@ -634,9 +637,9 @@ func getAllChores() ([]Chore, error) {
 	return chores, rows.Err()
 }
 
-func addChore(title, assignedTo, dueDate, points string) error {
-	_, err := db.Exec("INSERT INTO chores (title, assigned_to, due_date, points) VALUES (?, ?, ?, ?)",
-		title, assignedTo, dueDate, points)
+func addChore(title, description, assignedTo, dueDate, points string) error {
+	_, err := db.Exec("INSERT INTO chores (title, description, assigned_to, due_date, points) VALUES (?, ?, ?, ?, ?)",
+		title, description, assignedTo, dueDate, points)
 	return err
 }
 
@@ -673,6 +676,15 @@ const htmlTemplate = `
     <div class="max-w-4xl mx-auto px-4 py-8">
         <!-- Header -->
         <header class="text-center mb-8">
+            {{if .Chores}}
+            <div class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl mb-4 shadow-lg">
+                <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
+                </svg>
+            </div>
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">Family Chore List</h1>
+            <p class="text-gray-600">Keep track of family chores and tasks</p>
+            {{else}}
             <div class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl mb-4 shadow-lg">
                 <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
@@ -680,6 +692,7 @@ const htmlTemplate = `
             </div>
             <h1 class="text-4xl font-bold text-gray-800 mb-2">Family Shopping List</h1>
             <p class="text-gray-600">Keep track of what your family needs</p>
+            {{end}}
         </header>
 
         <!-- Navigation -->
@@ -710,13 +723,18 @@ const htmlTemplate = `
                             class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-colors">
                     </div>
                     <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Chore Details</label>
+                        <textarea name="description" placeholder="Add more details about this chore..." rows="2"
+                            class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-colors"></textarea>
+                    </div>
+                    <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Assigned To</label>
                         <input type="text" name="assigned_to" list="name-list" placeholder="Who will do this?" required
                             class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-colors">
                     </div>
                     <div class="grid grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Due Date (Optional)</label>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Date Needed By</label>
                             <input type="date" name="due_date"
                                 class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-colors">
                         </div>
@@ -746,30 +764,54 @@ const htmlTemplate = `
                 </div>
 
                 {{if .Chores}}
-                <div class="space-y-2 max-h-96 overflow-y-auto">
-                    {{range .Chores}}
-                    <div class="flex items-center gap-3 p-3 rounded-lg border {{if .Completed}}bg-green-50 border-green-200{{else}}bg-white border-gray-200{{end}}">
-                        <form method="POST" action="/chores/complete" class="flex-shrink-0">
-                            <input type="hidden" name="chore_id" value="{{.ID}}">
-                            <input type="hidden" name="completed" value="{{if .Completed}}0{{else}}1{{end}}">
-                            <button type="submit" class="w-6 h-6 rounded border-2 {{if .Completed}}bg-green-500 border-green-500{{else}}border-gray-300 hover:border-green-500{{end}} flex items-center justify-center transition-colors">
-                                {{if .Completed}}<svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>{{end}}
-                            </button>
-                        </form>
-                        <div class="flex-1">
-                            <p class="text-sm font-medium {{if .Completed}}text-gray-500 line-through{{else}}text-gray-800{{end}}">{{.Title}}</p>
-                            <p class="text-xs text-gray-500">
-                                {{.AssignedTo}} {{if .DueDate}}• Due {{.DueDate}}{{end}} • {{.Points}} pts
-                            </p>
-                        </div>
-                        <form method="POST" action="/chores/delete">
-                            <input type="hidden" name="chore_id" value="{{.ID}}">
-                            <button type="submit" class="text-gray-400 hover:text-red-500 transition-colors" onclick="return confirm('Delete this chore?')">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                            </button>
-                        </form>
-                    </div>
-                    {{end}}
+                <div class="overflow-hidden rounded-lg border border-gray-200 max-h-96 overflow-y-auto">
+                    <table class="w-full">
+                        <thead class="bg-green-50 sticky top-0">
+                            <tr>
+                                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider w-8"></th>
+                                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Chore Details</th>
+                                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Assigned To</th>
+                                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Date Added</th>
+                                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Needed By</th>
+                                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider w-8"></th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-200">
+                            {{range .Chores}}
+                            <tr class="hover:bg-green-50 transition-colors {{if .Completed}}bg-gray-50{{end}}">
+                                <td class="px-3 py-3">
+                                    <form method="POST" action="/chores/complete">
+                                        <input type="hidden" name="chore_id" value="{{.ID}}">
+                                        <input type="hidden" name="completed" value="{{if .Completed}}0{{else}}1{{end}}">
+                                        <button type="submit" class="w-6 h-6 rounded border-2 {{if .Completed}}bg-green-500 border-green-500{{else}}border-gray-300 hover:border-green-500{{end}} flex items-center justify-center transition-colors">
+                                            {{if .Completed}}<svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>{{end}}
+                                        </button>
+                                    </form>
+                                </td>
+                                <td class="px-3 py-3">
+                                    <p class="text-sm font-medium {{if .Completed}}text-gray-500 line-through{{else}}text-gray-800{{end}}">{{.Title}}</p>
+                                    {{if .Description}}<p class="text-xs text-gray-500 {{if .Completed}}line-through{{end}}">{{.Description}}</p>{{end}}
+                                    <p class="text-xs text-green-600 font-medium">{{.Points}} pts</p>
+                                </td>
+                                <td class="px-3 py-3">
+                                    <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">{{.AssignedTo}}</span>
+                                </td>
+                                <td class="px-3 py-3 text-sm text-gray-600">{{.CreatedAt.Format "Jan 02"}}</td>
+                                <td class="px-3 py-3 text-sm {{if and .DueDate (not .Completed)}}text-orange-600 font-medium{{else}}text-gray-600{{end}}">
+                                    {{if .DueDate}}{{.DueDate}}{{else}}-{{end}}
+                                </td>
+                                <td class="px-3 py-3">
+                                    <form method="POST" action="/chores/delete">
+                                        <input type="hidden" name="chore_id" value="{{.ID}}">
+                                        <button type="submit" class="text-gray-400 hover:text-red-500 transition-colors" onclick="return confirm('Delete this chore?')">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
                 </div>
 
                 <!-- Points Summary -->
