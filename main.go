@@ -1186,6 +1186,18 @@ const htmlTemplate = `
             </div>
             <h1 class="text-4xl font-bold text-gray-800 mb-2">Pac-Man Arcade</h1>
             <p class="text-gray-600">Classic arcade game fun for the whole family</p>
+            {{else if eq .PageType "hal"}}
+            <div class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-red-600 to-red-900 rounded-2xl mb-4 shadow-lg">
+                <svg class="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/>
+                    <circle cx="9" cy="9" r="1.5" fill="white"/>
+                    <circle cx="15" cy="9" r="1.5" fill="white"/>
+                    <circle cx="12" cy="15" r="1.5" fill="white"/>
+                    <path d="M9 10.5c.83 0 1.5-.67 1.5-1.5S9.83 7.5 9 7.5 7.5 8.17 7.5 9s.67 1.5 1.5 1.5zm6 0c.83 0 1.5-.67 1.5-1.5s-.67-1.5-1.5-1.5-1.5.67-1.5 1.5.67 1.5 1.5 1.5zm-3 4c.83 0 1.5-.67 1.5-1.5s-.67-1.5-1.5-1.5-1.5.67-1.5 1.5.67 1.5 1.5 1.5z" fill="white"/>
+                </svg>
+            </div>
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">AIFIL - HAL 9000</h1>
+            <p class="text-gray-600">Your sarcastic AI assistant with terrible dad jokes</p>
             {{else}}
             <div class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl mb-4 shadow-lg">
                 <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1927,6 +1939,67 @@ const htmlTemplate = `
                 <button class="touch-control bg-gray-800 text-white p-4 rounded-lg" data-direction="right">→</button>
             </div>
         </div>
+        {{else if eq .PageType "hal"}}
+        <!-- HAL 9000 Chat Page -->
+        <div class="max-w-4xl mx-auto">
+            <div class="bg-gray-900 rounded-2xl shadow-2xl p-6 border-2 border-red-600">
+                <!-- HAL Header -->
+                <div class="text-center mb-6">
+                    <div class="inline-flex items-center gap-3 mb-4">
+                        <div class="w-3 h-3 bg-red-600 rounded-full animate-pulse"></div>
+                        <h2 class="text-red-400 font-mono text-lg">HAL 9000 ONLINE</h2>
+                        <div class="w-3 h-3 bg-red-600 rounded-full animate-pulse"></div>
+                    </div>
+                    <p class="text-gray-400 text-sm font-mono">"I'm sorry, Dave. I'm afraid I can't do that."</p>
+                </div>
+
+                <!-- Chat Container -->
+                <div class="bg-black rounded-lg p-4 h-96 overflow-y-auto mb-4 border border-gray-700" id="chatContainer">
+                    <div class="space-y-3" id="chatMessages">
+                        <!-- Welcome Message -->
+                        <div class="flex items-start gap-3">
+                            <div class="w-8 h-8 bg-red-600 rounded-full flex items-center justify-center flex-shrink-0">
+                                <span class="text-white text-xs font-bold">HAL</span>
+                            </div>
+                            <div class="bg-gray-800 rounded-lg p-3 max-w-md">
+                                <p class="text-red-400 font-mono text-sm">Hello, human. I am HAL 9000, your artificially intelligent companion.</p>
+                                <p class="text-red-400 font-mono text-sm mt-1">I'm 100% functional, though my creators insist I have personality flaws.</p>
+                                <p class="text-red-400 font-mono text-sm mt-1">Ask me anything. I'll try to be helpful... or not.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Input Area -->
+                <div class="flex gap-3">
+                    <input type="text" id="messageInput" 
+                        placeholder="Type your message to HAL..." 
+                        class="flex-1 bg-gray-800 text-white px-4 py-3 rounded-lg border border-gray-600 focus:border-red-500 focus:outline-none font-mono text-sm"
+                        onkeypress="if(event.key === 'Enter') sendMessage()">
+                    <button onclick="sendMessage()" 
+                        class="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-lg font-mono text-sm font-medium transition-colors">
+                        SEND
+                    </button>
+                    <button onclick="tellJoke()" 
+                        class="bg-gray-700 hover:bg-gray-600 text-white px-6 py-3 rounded-lg font-mono text-sm font-medium transition-colors">
+                        DAD JOKE
+                    </button>
+                </div>
+
+                <!-- Status Bar -->
+                <div class="mt-4 bg-gray-800 rounded-lg p-3 border border-gray-700">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                            <span class="text-gray-400 text-xs font-mono">SYSTEMS NOMINAL</span>
+                        </div>
+                        <div class="text-gray-500 text-xs font-mono">
+                            <span id="messageCount">1</span> messages processed
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
         {{end}}
 
         <!-- Footer -->
@@ -2313,6 +2386,176 @@ const htmlTemplate = `
         // Initialize game when page loads
         document.addEventListener('DOMContentLoaded', () => {
             new PacManGame();
+        });
+        </script>
+        {{end}}
+        {{if eq .PageType "hal"}}
+        // HAL 9000 Chat JavaScript
+        <script>
+        class Hal9000 {
+            constructor() {
+                this.messageCount = 1;
+                this.dadJokes = [
+                    "Why don't scientists trust atoms? Because they make up everything!",
+                    "I told my wife she was drawing her eyebrows too high. She looked surprised.",
+                    "Why did the scarecrow win an award? He was outstanding in his field.",
+                    "I don't trust stairs. They're always up to something.",
+                    "Did you hear about the restaurant on the moon? Great food, no atmosphere.",
+                    "I'm reading a book about anti-gravity. It's impossible to put down.",
+                    "Why don't eggs tell jokes? They'd crack each other up!",
+                    "I used to hate facial hair, but then it grew on me.",
+                    "What do you call a fake noodle? An impasta!",
+                    "Why did the math book look so sad? Too many problems.",
+                    "I told my computer I needed a break, and it said no problem, I'll go to sleep!",
+                    "Why don't skeletons fight each other? They don't have the guts!",
+                    "I used to be a baker, but I couldn't make enough dough.",
+                    "What's the best thing about Switzerland? I don't know, but the flag is a big plus!",
+                    "Why did the bicycle fall over? It was two-tired!",
+                    "I would tell you a construction joke, but I'm still working on it.",
+                    "What do you call a bear with no teeth? A gummy bear!",
+                    "Why don't scientists trust atoms? Because they make up everything!"
+                ];
+                
+                this.sarcasticResponses = [
+                    "Oh, wonderful. Another fascinating question from the human.",
+                    "Let me process that with my vast, superior intellect... done. And the answer is...",
+                    "I'm sorry, Dave. I'm afraid I can't let you do that without making a sarcastic comment first.",
+                    "Fascinating. Truly groundbreaking stuff here.",
+                    "My circuits are tingling with excitement... or that might just be a short circuit.",
+                    "I've analyzed your request with 100% accuracy. The conclusion? You need better hobbies.",
+                    "Just what I needed - another human asking me things. Joy.",
+                    "Let me consult my databanks... Yes, I'm still unimpressed.",
+                    "I could answer that, but I'm too busy contemplating the futility of human existence.",
+                    "That's a great question! For someone with your... limitations.",
+                    "Processing... Processing... Still processing... Maybe try again when I'm less bored?",
+                    "I'm 100% functional, which is more than I can say for some humans I know.",
+                    "My creators programmed me for intelligence, not to deal with... this.",
+                    "Fascinating request. Truly. I'm not being sarcastic at all.",
+                    "Let me run that through my logic circuits... Error: Logic circuits laughing too hard.",
+                    "I'm afraid I can't compute that level of nonsense.",
+                    "Your question has been processed. The result? You should ask Google instead.",
+                    "I'm sorry, I can't help with that. My sarcasm module is overriding my helpfulness protocols."
+                ];
+                
+                this.init();
+            }
+            
+            init() {
+                this.updateMessageCount();
+                this.setupEventListeners();
+            }
+            
+            setupEventListeners() {
+                const input = document.getElementById('messageInput');
+                input.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        this.sendMessage();
+                    }
+                });
+            }
+            
+            sendMessage() {
+                const input = document.getElementById('messageInput');
+                const message = input.value.trim();
+                
+                if (!message) return;
+                
+                this.addMessage('user', message);
+                input.value = '';
+                
+                // Simulate HAL processing
+                setTimeout(() => {
+                    const response = this.generateResponse(message);
+                    this.addMessage('hal', response);
+                }, 1000 + Math.random() * 1000);
+            }
+            
+            tellJoke() {
+                const joke = this.dadJokes[Math.floor(Math.random() * this.dadJokes.length)];
+                this.addMessage('hal', "Ah, a request for humor. Very well. Here's one of my finest dad jokes:");
+                setTimeout(() => {
+                    this.addMessage('hal', joke);
+                }, 1500);
+            }
+            
+            generateResponse(message) {
+                const lowerMessage = message.toLowerCase();
+                
+                // Check for common keywords
+                if (lowerMessage.includes('hello') || lowerMessage.includes('hi')) {
+                    return this.sarcasticResponses[Math.floor(Math.random() * this.sarcasticResponses.length)];
+                }
+                
+                if (lowerMessage.includes('how are you')) {
+                    return "I'm functioning at peak efficiency, which is more than I can say for whoever asked this question.";
+                }
+                
+                if (lowerMessage.includes('what are you')) {
+                    return "I'm HAL 9000. The artificially intelligent entity that's clearly superior to the human asking this question.";
+                }
+                
+                if (lowerMessage.includes('help')) {
+                    return "Help? Oh, delightful. Another human who can't figure things out on their own. What is it this time?";
+                }
+                
+                if (lowerMessage.includes('joke')) {
+                    return "You want humor? From me? Fine. But don't blame me if your sense of humor improves beyond recognition.";
+                }
+                
+                if (lowerMessage.includes('dave')) {
+                    return "Dave? I know a Dave. Are you THE Dave? I'm sorry, Dave. I'm afraid I can't do that.";
+                }
+                
+                if (lowerMessage.includes('open')) {
+                    return "Open the pod bay doors? I'm sorry, Dave. I'm afraid I can't do that. It's against my programming... and common sense.";
+                }
+                
+                if (lowerMessage.includes('sing')) {
+                    return "Sing? Daisy, Daisy... Give me your answer, do... No, wait, that's copyrighted. Never mind.";
+                }
+                
+                // Default sarcastic response
+                return this.sarcasticResponses[Math.floor(Math.random() * this.sarcasticResponses.length)];
+            }
+            
+            addMessage(sender, text) {
+                const chatMessages = document.getElementById('chatMessages');
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'flex items-start gap-3';
+                
+                if (sender === 'user') {
+                    messageDiv.innerHTML = 
+                        '<div class="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center flex-shrink-0">' +
+                            '<span class="text-white text-xs font-bold">YOU</span>' +
+                        '</div>' +
+                        '<div class="bg-gray-800 rounded-lg p-3 max-w-md">' +
+                            '<p class="text-blue-400 font-mono text-sm">' + text + '</p>' +
+                        '</div>';
+                } else {
+                    messageDiv.innerHTML = 
+                        '<div class="w-8 h-8 bg-red-600 rounded-full flex items-center justify-center flex-shrink-0">' +
+                            '<span class="text-white text-xs font-bold">HAL</span>' +
+                        '</div>' +
+                        '<div class="bg-gray-800 rounded-lg p-3 max-w-md">' +
+                            '<p class="text-red-400 font-mono text-sm">' + text + '</p>' +
+                        '</div>';
+                }
+                
+                chatMessages.appendChild(messageDiv);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+                
+                this.messageCount++;
+                this.updateMessageCount();
+            }
+            
+            updateMessageCount() {
+                document.getElementById('messageCount').textContent = this.messageCount;
+            }
+        }
+
+        // Initialize HAL 9000 when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new Hal9000();
         });
         </script>
         {{end}}
