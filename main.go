@@ -46,6 +46,7 @@ type Chore struct {
 }
 
 type PageData struct {
+	PageType    string
 	CurrentDate string
 	Items       []Item
 	Dates       []ListDate
@@ -176,6 +177,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := PageData{
+		PageType:    "shopping",
 		CurrentDate: dateStr,
 		Items:       items,
 		Dates:       dates,
@@ -234,8 +236,9 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := PageData{
-		Dates: dates,
-		Names: names,
+		PageType: "shopping",
+		Dates:    dates,
+		Names:    names,
 	}
 
 	if err := tmpl.Execute(w, data); err != nil {
@@ -511,6 +514,7 @@ func handleChores(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := PageData{
+		PageType:  "chores",
 		Chores:    chores,
 		Names:     names,
 		PointsMap: pointsMap,
@@ -676,7 +680,7 @@ const htmlTemplate = `
     <div class="max-w-4xl mx-auto px-4 py-8">
         <!-- Header -->
         <header class="text-center mb-8">
-            {{if .Chores}}
+            {{if eq .PageType "chores"}}
             <div class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl mb-4 shadow-lg">
                 <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
@@ -697,15 +701,15 @@ const htmlTemplate = `
 
         <!-- Navigation -->
         <nav class="flex justify-center gap-4 mb-8">
-            <a href="/" class="px-6 py-2 bg-white rounded-full shadow-md text-gray-700 hover:bg-indigo-50 hover:text-indigo-600 transition-colors {{if .CurrentDate}}bg-indigo-100 text-indigo-700{{end}}">
+            <a href="/" class="px-6 py-2 bg-white rounded-full shadow-md text-gray-700 hover:bg-indigo-50 hover:text-indigo-600 transition-colors {{if eq .PageType "shopping"}}bg-indigo-100 text-indigo-700{{end}}">
                 🛒 Shopping List
             </a>
-            <a href="/chores" class="px-6 py-2 bg-white rounded-full shadow-md text-gray-700 hover:bg-green-50 hover:text-green-600 transition-colors {{if .Chores}}bg-green-100 text-green-700{{end}}">
+            <a href="/chores" class="px-6 py-2 bg-white rounded-full shadow-md text-gray-700 hover:bg-green-50 hover:text-green-600 transition-colors {{if eq .PageType "chores"}}bg-green-100 text-green-700{{end}}">
                 ✅ Chores
             </a>
         </nav>
 
-        {{if .Chores}}
+        {{if eq .PageType "chores"}}
         <!-- Chores Page -->
         <div class="grid lg:grid-cols-2 gap-6">
             <!-- Add Chore Form -->
@@ -830,7 +834,7 @@ const htmlTemplate = `
                 {{end}}
             </div>
         </div>
-        {{else}}
+        {{else if eq .PageType "shopping"}}
         <!-- Shopping List Page -->
         <div class="grid lg:grid-cols-3 gap-6">
             <!-- Left Column: Dinner Poll & Add Item Form -->
