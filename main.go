@@ -34,6 +34,16 @@ type DinnerPoll struct {
 	Active  bool
 }
 
+type Chore struct {
+	ID         int
+	Title      string
+	AssignedTo string
+	DueDate    string
+	Completed  bool
+	Points     int
+	CreatedAt  time.Time
+}
+
 type PageData struct {
 	CurrentDate string
 	Items       []Item
@@ -41,6 +51,7 @@ type PageData struct {
 	Message     string
 	Names       []string
 	DinnerPoll  *DinnerPoll
+	Chores      []Chore
 }
 
 var (
@@ -70,6 +81,10 @@ func main() {
 	http.HandleFunc("/dinner/create", handleDinnerCreate)
 	http.HandleFunc("/dinner/vote", handleDinnerVote)
 	http.HandleFunc("/dinner/wheel", handleDinnerWheel)
+	http.HandleFunc("/chores", handleChores)
+	http.HandleFunc("/chores/add", handleChoreAdd)
+	http.HandleFunc("/chores/complete", handleChoreComplete)
+	http.HandleFunc("/chores/delete", handleChoreDelete)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -113,6 +128,16 @@ func migrate() error {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             option_id INTEGER NOT NULL REFERENCES dinner_options(id) ON DELETE CASCADE,
             voter_name TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS chores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            assigned_to TEXT NOT NULL,
+            due_date TEXT,
+            completed INTEGER NOT NULL DEFAULT 0,
+            points INTEGER NOT NULL DEFAULT 5,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
     `)
 	return err
@@ -463,6 +488,162 @@ func handleDinnerWheel(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func handleChores(w http.ResponseWriter, r *http.Request) {
+	chores, err := getAllChores()
+	if err != nil {
+		log.Printf("failed to load chores: %v", err)
+	}
+
+	names, err := getUniqueNames()
+	if err != nil {
+		log.Printf("failed to load names: %v", err)
+	}
+
+	data := PageData{
+		Chores: chores,
+		Names:  names,
+	}
+
+	if err := tmpl.Execute(w, data); err != nil {
+		http.Error(w, "template error", http.StatusInternalServerError)
+	}
+}
+
+func handleChoreAdd(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/chores", http.StatusSeeOther)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+
+	title := r.FormValue("title")
+	assignedTo := r.FormValue("assigned_to")
+	dueDate := r.FormValue("due_date")
+	points := r.FormValue("points")
+	if points == "" {
+		points = "5"
+	}
+
+	if title == "" || assignedTo == "" {
+		http.Redirect(w, r, "/chores", http.StatusSeeOther)
+		return
+	}
+
+	if err := addChore(title, assignedTo, dueDate, points); err != nil {
+		log.Printf("addChore error: %v", err)
+		http.Error(w, "failed to add chore", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, "/chores", http.StatusSeeOther)
+}
+
+func handleChoreComplete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/chores", http.StatusSeeOther)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+
+	choreID := r.FormValue("chore_id")
+	completed := r.FormValue("completed") == "1"
+
+	if choreID == "" {
+		http.Redirect(w, r, "/chores", http.StatusSeeOther)
+		return
+	}
+
+	if err := toggleChoreComplete(choreID, completed); err != nil {
+		log.Printf("toggleChoreComplete error: %v", err)
+		http.Error(w, "failed to update chore", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, "/chores", http.StatusSeeOther)
+}
+
+func handleChoreDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/chores", http.StatusSeeOther)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+
+	choreID := r.FormValue("chore_id")
+	if choreID == "" {
+		http.Redirect(w, r, "/chores", http.StatusSeeOther)
+		return
+	}
+
+	if err := deleteChore(choreID); err != nil {
+		log.Printf("deleteChore error: %v", err)
+		http.Error(w, "failed to delete chore", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, "/chores", http.StatusSeeOther)
+}
+
+func getAllChores() ([]Chore, error) {
+	rows, err := db.Query(`
+        SELECT id, title, assigned_to, due_date, completed, points, created_at
+        FROM chores
+        ORDER BY completed ASC, due_date ASC, created_at DESC;
+    `)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var chores []Chore
+	for rows.Next() {
+		var c Chore
+		var completed int
+		var createdAtStr string
+		if err := rows.Scan(&c.ID, &c.Title, &c.AssignedTo, &c.DueDate, &completed, &c.Points, &createdAtStr); err != nil {
+			return nil, err
+		}
+		c.Completed = completed == 1
+		if createdAt, err := time.Parse("2006-01-02 15:04:05", createdAtStr); err == nil {
+			c.CreatedAt = createdAt
+		}
+		chores = append(chores, c)
+	}
+	return chores, rows.Err()
+}
+
+func addChore(title, assignedTo, dueDate, points string) error {
+	_, err := db.Exec("INSERT INTO chores (title, assigned_to, due_date, points) VALUES (?, ?, ?, ?)",
+		title, assignedTo, dueDate, points)
+	return err
+}
+
+func toggleChoreComplete(choreID string, completed bool) error {
+	completedInt := 0
+	if completed {
+		completedInt = 1
+	}
+	_, err := db.Exec("UPDATE chores SET completed = ? WHERE id = ?", completedInt, choreID)
+	return err
+}
+
+func deleteChore(choreID string) error {
+	_, err := db.Exec("DELETE FROM chores WHERE id = ?", choreID)
+	return err
+}
+
 const htmlTemplate = `
 <!DOCTYPE html>
 <html lang="en">
@@ -491,6 +672,122 @@ const htmlTemplate = `
             <p class="text-gray-600">Keep track of what your family needs</p>
         </header>
 
+        <!-- Navigation -->
+        <nav class="flex justify-center gap-4 mb-8">
+            <a href="/" class="px-6 py-2 bg-white rounded-full shadow-md text-gray-700 hover:bg-indigo-50 hover:text-indigo-600 transition-colors {{if .CurrentDate}}bg-indigo-100 text-indigo-700{{end}}">
+                🛒 Shopping List
+            </a>
+            <a href="/chores" class="px-6 py-2 bg-white rounded-full shadow-md text-gray-700 hover:bg-green-50 hover:text-green-600 transition-colors {{if .Chores}}bg-green-100 text-green-700{{end}}">
+                ✅ Chores
+            </a>
+        </nav>
+
+        {{if .Chores}}
+        <!-- Chores Page -->
+        <div class="grid lg:grid-cols-2 gap-6">
+            <!-- Add Chore Form -->
+            <div class="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
+                <h2 class="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                    </svg>
+                    Add New Chore
+                </h2>
+                <form method="POST" action="/chores/add" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Chore Title</label>
+                        <input type="text" name="title" placeholder="e.g., Take out trash" required
+                            class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-colors">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Assigned To</label>
+                        <input type="text" name="assigned_to" list="name-list" placeholder="Who will do this?" required
+                            class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-colors">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Due Date (Optional)</label>
+                            <input type="date" name="due_date"
+                                class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-colors">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Points</label>
+                            <input type="number" name="points" value="5" min="1" max="100"
+                                class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-colors">
+                        </div>
+                    </div>
+                    <button type="submit" 
+                        class="w-full bg-gradient-to-r from-green-500 to-emerald-600 text-white font-medium py-2.5 px-4 rounded-lg hover:from-green-600 hover:to-emerald-700 focus:ring-4 focus:ring-green-200 transition-all shadow-md">
+                        Add Chore
+                    </button>
+                </form>
+            </div>
+
+            <!-- Chore List -->
+            <div class="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-xl font-semibold text-gray-800 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
+                        </svg>
+                        Family Chores
+                    </h2>
+                    <span class="text-sm text-gray-500">{{len .Chores}} total</span>
+                </div>
+
+                {{if .Chores}}
+                <div class="space-y-2 max-h-96 overflow-y-auto">
+                    {{range .Chores}}
+                    <div class="flex items-center gap-3 p-3 rounded-lg border {{if .Completed}}bg-green-50 border-green-200{{else}}bg-white border-gray-200{{end}}">
+                        <form method="POST" action="/chores/complete" class="flex-shrink-0">
+                            <input type="hidden" name="chore_id" value="{{.ID}}">
+                            <input type="hidden" name="completed" value="{{if .Completed}}0{{else}}1{{end}}">
+                            <button type="submit" class="w-6 h-6 rounded border-2 {{if .Completed}}bg-green-500 border-green-500{{else}}border-gray-300 hover:border-green-500{{end}} flex items-center justify-center transition-colors">
+                                {{if .Completed}}<svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>{{end}}
+                            </button>
+                        </form>
+                        <div class="flex-1">
+                            <p class="text-sm font-medium {{if .Completed}}text-gray-500 line-through{{else}}text-gray-800{{end}}">{{.Title}}</p>
+                            <p class="text-xs text-gray-500">
+                                {{.AssignedTo}} {{if .DueDate}}• Due {{.DueDate}}{{end}} • {{.Points}} pts
+                            </p>
+                        </div>
+                        <form method="POST" action="/chores/delete">
+                            <input type="hidden" name="chore_id" value="{{.ID}}">
+                            <button type="submit" class="text-gray-400 hover:text-red-500 transition-colors" onclick="return confirm('Delete this chore?')">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            </button>
+                        </form>
+                    </div>
+                    {{end}}
+                </div>
+
+                <!-- Points Summary -->
+                <div class="mt-4 pt-4 border-t border-gray-200">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-2">Points Leaderboard</h3>
+                    <div class="flex flex-wrap gap-2">
+                        {{$chores := .Chores}}
+                        {{range .Names}}
+                        {{$name := .}}
+                        {{$points := 0}}
+                        {{range $chores}}
+                        {{if and (eq .AssignedTo $name) .Completed}}
+                        {{$points = add $points .Points}}
+                        {{end}}
+                        {{end}}
+                        {{if gt $points 0}}
+                        <span class="px-3 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full font-medium">{{.}}: {{$points}} pts</span>
+                        {{end}}
+                        {{end}}
+                    </div>
+                </div>
+                {{else}}
+                <p class="text-gray-500 text-center py-8">No chores yet. Add one to get started!</p>
+                {{end}}
+            </div>
+        </div>
+        {{else}}
+        <!-- Shopping List Page -->
         <div class="grid lg:grid-cols-3 gap-6">
             <!-- Left Column: Dinner Poll & Add Item Form -->
             <div class="lg:col-span-1 space-y-6">
@@ -777,6 +1074,8 @@ const htmlTemplate = `
                 </div>
             </div>
         </div>
+
+        {{end}}
 
         <!-- Footer -->
         <footer class="text-center mt-8 text-gray-500 text-sm">
