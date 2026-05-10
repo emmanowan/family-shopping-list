@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: family-shopping-list
+    runtime: go
+    plan: free
+    buildCommand: go build -o app main.go
+    startCommand: ./app
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: DATABASE_URL
+        value: sqlite://./shopping_list.db
