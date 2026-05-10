@@ -57,6 +57,46 @@ type NewsArticle struct {
 	ImageURL    string
 }
 
+type AnalyticsData struct {
+	ShoppingPatterns struct {
+		TopItems      []ItemFrequency `json:"topItems"`
+		TotalItems    int             `json:"totalItems"`
+		UniqueItems   int             `json:"uniqueItems"`
+		MostActiveDay string          `json:"mostActiveDay"`
+	} `json:"shoppingPatterns"`
+	ChorePerformance struct {
+		TotalChores     int            `json:"totalChores"`
+		CompletedChores int            `json:"completedChores"`
+		CompletionRate  float64        `json:"completionRate"`
+		TopPerformers   []PersonStats  `json:"topPerformers"`
+		PersonStats     map[string]int `json:"personStats"`
+	} `json:"chorePerformance"`
+	FamilyStats struct {
+		TotalPoints    int             `json:"totalPoints"`
+		ActiveMembers  []string        `json:"activeMembers"`
+		WeeklyActivity []DailyActivity `json:"weeklyActivity"`
+	} `json:"familyStats"`
+}
+
+type ItemFrequency struct {
+	Item     string `json:"item"`
+	Count    int    `json:"count"`
+	LastUsed string `json:"lastUsed"`
+}
+
+type PersonStats struct {
+	Name   string  `json:"name"`
+	Points int     `json:"points"`
+	Chores int     `json:"chores"`
+	Rate   float64 `json:"rate"`
+}
+
+type DailyActivity struct {
+	Date   string `json:"date"`
+	Items  int    `json:"items"`
+	Chores int    `json:"chores"`
+}
+
 type PageData struct {
 	PageType     string
 	CurrentDate  string
@@ -68,6 +108,7 @@ type PageData struct {
 	Chores       []Chore
 	PointsMap    map[string]int
 	NewsArticles []NewsArticle
+	Analytics    *AnalyticsData
 }
 
 var (
@@ -102,6 +143,7 @@ func main() {
 	http.HandleFunc("/chores/complete", handleChoreComplete)
 	http.HandleFunc("/chores/delete", handleChoreDelete)
 	http.HandleFunc("/news", handleNews)
+	http.HandleFunc("/analytics", handleAnalytics)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -789,6 +831,297 @@ func getFallbackNews() []NewsArticle {
 	}
 }
 
+func handleAnalytics(w http.ResponseWriter, r *http.Request) {
+	analytics, err := calculateAnalytics()
+	if err != nil {
+		log.Printf("failed to calculate analytics: %v", err)
+		analytics = getDefaultAnalytics()
+	}
+
+	data := PageData{
+		PageType:  "analytics",
+		Analytics: analytics,
+	}
+
+	if err := tmpl.Execute(w, data); err != nil {
+		http.Error(w, "template error", http.StatusInternalServerError)
+	}
+}
+
+func calculateAnalytics() (*AnalyticsData, error) {
+	analytics := &AnalyticsData{}
+
+	// Shopping Patterns
+	items, err := getAllItemsForAnalytics()
+	if err != nil {
+		log.Printf("failed to get items for analytics: %v", err)
+	} else {
+		patterns := calculateShoppingPatterns(items)
+		analytics.ShoppingPatterns.TopItems = patterns.TopItems
+		analytics.ShoppingPatterns.TotalItems = patterns.TotalItems
+		analytics.ShoppingPatterns.UniqueItems = patterns.UniqueItems
+		analytics.ShoppingPatterns.MostActiveDay = patterns.MostActiveDay
+	}
+
+	// Chore Performance
+	chores, err := getAllChores()
+	if err != nil {
+		log.Printf("failed to get chores for analytics: %v", err)
+	} else {
+		performance := calculateChorePerformance(chores)
+		analytics.ChorePerformance.TotalChores = performance.TotalChores
+		analytics.ChorePerformance.CompletedChores = performance.CompletedChores
+		analytics.ChorePerformance.CompletionRate = performance.CompletionRate
+		analytics.ChorePerformance.TopPerformers = performance.TopPerformers
+		analytics.ChorePerformance.PersonStats = performance.PersonStats
+	}
+
+	// Family Stats
+	stats := calculateFamilyStats(chores)
+	analytics.FamilyStats.TotalPoints = stats.TotalPoints
+	analytics.FamilyStats.ActiveMembers = stats.ActiveMembers
+	analytics.FamilyStats.WeeklyActivity = stats.WeeklyActivity
+
+	return analytics, nil
+}
+
+func getAllItemsForAnalytics() ([]Item, error) {
+	var items []Item
+
+	rows, err := db.Query(`
+		SELECT i.first_name, i.item, i.created_at 
+		FROM items i
+		JOIN lists l ON i.list_id = l.id
+		ORDER BY i.created_at DESC
+		LIMIT 100
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var item Item
+		if err := rows.Scan(&item.FirstName, &item.Item, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+
+	return items, rows.Err()
+}
+
+func calculateShoppingPatterns(items []Item) struct {
+	TopItems      []ItemFrequency
+	TotalItems    int
+	UniqueItems   int
+	MostActiveDay string
+} {
+	patterns := struct {
+		TopItems      []ItemFrequency
+		TotalItems    int
+		UniqueItems   int
+		MostActiveDay string
+	}{}
+
+	itemCount := make(map[string]int)
+	itemLastUsed := make(map[string]string)
+
+	for _, item := range items {
+		itemCount[item.Item]++
+		if lastUsed, exists := itemLastUsed[item.Item]; !exists || item.CreatedAt.After(parseTime(lastUsed)) {
+			itemLastUsed[item.Item] = item.CreatedAt.Format("2006-01-02")
+		}
+	}
+
+	// Top items
+	var topItems []ItemFrequency
+	for item, count := range itemCount {
+		topItems = append(topItems, ItemFrequency{
+			Item:     item,
+			Count:    count,
+			LastUsed: itemLastUsed[item],
+		})
+	}
+
+	// Sort by count (descending)
+	for i := 0; i < len(topItems)-1; i++ {
+		for j := i + 1; j < len(topItems); j++ {
+			if topItems[j].Count > topItems[i].Count {
+				topItems[i], topItems[j] = topItems[j], topItems[i]
+			}
+		}
+	}
+
+	// Take top 10
+	if len(topItems) > 10 {
+		topItems = topItems[:10]
+	}
+
+	patterns.TopItems = topItems
+	patterns.TotalItems = len(items)
+	patterns.UniqueItems = len(itemCount)
+	patterns.MostActiveDay = "Monday" // Simplified for now
+
+	return patterns
+}
+
+func calculateChorePerformance(chores []Chore) struct {
+	TotalChores     int
+	CompletedChores int
+	CompletionRate  float64
+	TopPerformers   []PersonStats
+	PersonStats     map[string]int
+} {
+	performance := struct {
+		TotalChores     int
+		CompletedChores int
+		CompletionRate  float64
+		TopPerformers   []PersonStats
+		PersonStats     map[string]int
+	}{}
+
+	personStats := make(map[string]int)
+	personChores := make(map[string]int)
+	personCompleted := make(map[string]int)
+
+	totalChores := len(chores)
+	completedChores := 0
+
+	for _, chore := range chores {
+		personStats[chore.AssignedTo] += chore.Points
+		personChores[chore.AssignedTo]++
+		if chore.Completed {
+			completedChores++
+			personCompleted[chore.AssignedTo]++
+		}
+	}
+
+	performance.TotalChores = totalChores
+	performance.CompletedChores = completedChores
+
+	if totalChores > 0 {
+		performance.CompletionRate = float64(completedChores) / float64(totalChores) * 100
+	}
+
+	performance.PersonStats = personStats
+
+	// Top performers
+	var topPerformers []PersonStats
+	for name, points := range personStats {
+		rate := 0.0
+		if personChores[name] > 0 {
+			rate = float64(personCompleted[name]) / float64(personChores[name]) * 100
+		}
+
+		topPerformers = append(topPerformers, PersonStats{
+			Name:   name,
+			Points: points,
+			Chores: personChores[name],
+			Rate:   rate,
+		})
+	}
+
+	// Sort by points
+	for i := 0; i < len(topPerformers)-1; i++ {
+		for j := i + 1; j < len(topPerformers); j++ {
+			if topPerformers[j].Points > topPerformers[i].Points {
+				topPerformers[i], topPerformers[j] = topPerformers[j], topPerformers[i]
+			}
+		}
+	}
+
+	performance.TopPerformers = topPerformers
+
+	return performance
+}
+
+func calculateFamilyStats(chores []Chore) struct {
+	TotalPoints    int
+	ActiveMembers  []string
+	WeeklyActivity []DailyActivity
+} {
+	stats := struct {
+		TotalPoints    int
+		ActiveMembers  []string
+		WeeklyActivity []DailyActivity
+	}{}
+
+	totalPoints := 0
+	activeMembers := make(map[string]bool)
+
+	for _, chore := range chores {
+		if chore.Completed {
+			totalPoints += chore.Points
+		}
+		activeMembers[chore.AssignedTo] = true
+	}
+
+	stats.TotalPoints = totalPoints
+
+	for member := range activeMembers {
+		stats.ActiveMembers = append(stats.ActiveMembers, member)
+	}
+
+	// Weekly activity (simplified)
+	now := time.Now()
+	for i := 6; i >= 0; i-- {
+		date := now.AddDate(0, 0, -i).Format("2006-01-02")
+		stats.WeeklyActivity = append(stats.WeeklyActivity, DailyActivity{
+			Date:   date,
+			Items:  0, // Simplified
+			Chores: 0, // Simplified
+		})
+	}
+
+	return stats
+}
+
+func parseTime(timeStr string) time.Time {
+	if t, err := time.Parse("2006-01-02 15:04:05", timeStr); err == nil {
+		return t
+	}
+	return time.Now()
+}
+
+func getDefaultAnalytics() *AnalyticsData {
+	return &AnalyticsData{
+		ShoppingPatterns: struct {
+			TopItems      []ItemFrequency `json:"topItems"`
+			TotalItems    int             `json:"totalItems"`
+			UniqueItems   int             `json:"uniqueItems"`
+			MostActiveDay string          `json:"mostActiveDay"`
+		}{
+			TopItems:      []ItemFrequency{},
+			TotalItems:    0,
+			UniqueItems:   0,
+			MostActiveDay: "Monday",
+		},
+		ChorePerformance: struct {
+			TotalChores     int            `json:"totalChores"`
+			CompletedChores int            `json:"completedChores"`
+			CompletionRate  float64        `json:"completionRate"`
+			TopPerformers   []PersonStats  `json:"topPerformers"`
+			PersonStats     map[string]int `json:"personStats"`
+		}{
+			TotalChores:     0,
+			CompletedChores: 0,
+			CompletionRate:  0,
+			TopPerformers:   []PersonStats{},
+			PersonStats:     map[string]int{},
+		},
+		FamilyStats: struct {
+			TotalPoints    int             `json:"totalPoints"`
+			ActiveMembers  []string        `json:"activeMembers"`
+			WeeklyActivity []DailyActivity `json:"weeklyActivity"`
+		}{
+			TotalPoints:    0,
+			ActiveMembers:  []string{},
+			WeeklyActivity: []DailyActivity{},
+		},
+	}
+}
+
 const htmlTemplate = `
 <!DOCTYPE html>
 <html lang="en">
@@ -824,6 +1157,14 @@ const htmlTemplate = `
             </div>
             <h1 class="text-4xl font-bold text-gray-800 mb-2">Malta News Hub</h1>
             <p class="text-gray-600">Stay updated with the latest news from Malta</p>
+            {{else if eq .PageType "analytics"}}
+            <div class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-orange-500 to-red-600 rounded-2xl mb-4 shadow-lg">
+                <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                </svg>
+            </div>
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">Family Analytics</h1>
+            <p class="text-gray-600">Insights and patterns from your family activities</p>
             {{else}}
             <div class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl mb-4 shadow-lg">
                 <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -845,6 +1186,9 @@ const htmlTemplate = `
             </a>
             <a href="/news" class="px-6 py-2 bg-white rounded-full shadow-md text-gray-700 hover:bg-purple-50 hover:text-purple-600 transition-colors {{if eq .PageType "news"}}bg-purple-100 text-purple-700{{end}}">
                 📰 Malta News
+            </a>
+            <a href="/analytics" class="px-6 py-2 bg-white rounded-full shadow-md text-gray-700 hover:bg-orange-50 hover:text-orange-600 transition-colors {{if eq .PageType "analytics"}}bg-orange-100 text-orange-700{{end}}">
+                📊 Analytics
             </a>
         </nav>
 
@@ -1329,6 +1673,147 @@ const htmlTemplate = `
                     This page aggregates news from leading Maltese media outlets including Times of Malta, Malta Independent, 
                     MaltaToday, Lovin Malta, and Newsbook Malta to keep you updated with the latest happenings in Malta.
                 </p>
+            </div>
+        </div>
+        {{else if eq .PageType "analytics"}}
+        <!-- Analytics Page -->
+        <div class="max-w-6xl mx-auto">
+            <!-- Shopping Patterns -->
+            <div class="bg-white rounded-2xl shadow-lg p-6 border border-gray-100 mb-6">
+                <h2 class="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path>
+                    </svg>
+                    Shopping Patterns
+                </h2>
+                <div class="grid md:grid-cols-3 gap-4 mb-4">
+                    <div class="bg-blue-50 rounded-lg p-4">
+                        <p class="text-2xl font-bold text-blue-600">{{.Analytics.ShoppingPatterns.TotalItems}}</p>
+                        <p class="text-sm text-gray-600">Total Items</p>
+                    </div>
+                    <div class="bg-green-50 rounded-lg p-4">
+                        <p class="text-2xl font-bold text-green-600">{{.Analytics.ShoppingPatterns.UniqueItems}}</p>
+                        <p class="text-sm text-gray-600">Unique Items</p>
+                    </div>
+                    <div class="bg-purple-50 rounded-lg p-4">
+                        <p class="text-2xl font-bold text-purple-600">{{.Analytics.ShoppingPatterns.MostActiveDay}}</p>
+                        <p class="text-sm text-gray-600">Most Active Day</p>
+                    </div>
+                </div>
+                {{if .Analytics.ShoppingPatterns.TopItems}}
+                <div class="mt-4">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-2">Top Items</h3>
+                    <div class="space-y-2">
+                        {{range .Analytics.ShoppingPatterns.TopItems}}
+                        <div class="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
+                            <span class="text-sm font-medium">{{.Item}}</span>
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs text-gray-500">{{.LastUsed}}</span>
+                                <span class="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">{{.Count}}x</span>
+                            </div>
+                        </div>
+                        {{end}}
+                    </div>
+                </div>
+                {{end}}
+            </div>
+
+            <!-- Chore Performance -->
+            <div class="bg-white rounded-2xl shadow-lg p-6 border border-gray-100 mb-6">
+                <h2 class="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    Chore Performance
+                </h2>
+                <div class="grid md:grid-cols-3 gap-4 mb-4">
+                    <div class="bg-green-50 rounded-lg p-4">
+                        <p class="text-2xl font-bold text-green-600">{{.Analytics.ChorePerformance.TotalChores}}</p>
+                        <p class="text-sm text-gray-600">Total Chores</p>
+                    </div>
+                    <div class="bg-blue-50 rounded-lg p-4">
+                        <p class="text-2xl font-bold text-blue-600">{{.Analytics.ChorePerformance.CompletedChores}}</p>
+                        <p class="text-sm text-gray-600">Completed</p>
+                    </div>
+                    <div class="bg-orange-50 rounded-lg p-4">
+                        <p class="text-2xl font-bold text-orange-600">{{printf "%.1f" .Analytics.ChorePerformance.CompletionRate}}%</p>
+                        <p class="text-sm text-gray-600">Completion Rate</p>
+                    </div>
+                </div>
+                {{if .Analytics.ChorePerformance.TopPerformers}}
+                <div class="mt-4">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-2">Top Performers</h3>
+                    <div class="space-y-2">
+                        {{range .Analytics.ChorePerformance.TopPerformers}}
+                        <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                            <div>
+                                <p class="text-sm font-medium">{{.Name}}</p>
+                                <p class="text-xs text-gray-500">{{.Chores}} chores • {{printf "%.1f" .Rate}}% completion</p>
+                            </div>
+                            <div class="text-right">
+                                <p class="text-lg font-bold text-green-600">{{.Points}}</p>
+                                <p class="text-xs text-gray-500">points</p>
+                            </div>
+                        </div>
+                        {{end}}
+                    </div>
+                </div>
+                {{end}}
+            </div>
+
+            <!-- Family Stats -->
+            <div class="bg-white rounded-2xl shadow-lg p-6 border border-gray-100 mb-6">
+                <h2 class="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                    </svg>
+                    Family Statistics
+                </h2>
+                <div class="grid md:grid-cols-2 gap-4 mb-4">
+                    <div class="bg-orange-50 rounded-lg p-4">
+                        <p class="text-2xl font-bold text-orange-600">{{.Analytics.FamilyStats.TotalPoints}}</p>
+                        <p class="text-sm text-gray-600">Total Points Earned</p>
+                    </div>
+                    <div class="bg-purple-50 rounded-lg p-4">
+                        <p class="text-2xl font-bold text-purple-600">{{len .Analytics.FamilyStats.ActiveMembers}}</p>
+                        <p class="text-sm text-gray-600">Active Members</p>
+                    </div>
+                </div>
+                {{if .Analytics.FamilyStats.ActiveMembers}}
+                <div class="mt-4">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-2">Active Family Members</h3>
+                    <div class="flex flex-wrap gap-2">
+                        {{range .Analytics.FamilyStats.ActiveMembers}}
+                        <span class="px-3 py-1 bg-purple-100 text-purple-800 text-sm rounded-full font-medium">{{.}}</span>
+                        {{end}}
+                    </div>
+                </div>
+                {{end}}
+            </div>
+
+            <!-- Weekly Activity -->
+            <div class="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
+                <h2 class="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                    </svg>
+                    Weekly Activity
+                </h2>
+                {{if .Analytics.FamilyStats.WeeklyActivity}}
+                <div class="space-y-2">
+                    {{range .Analytics.FamilyStats.WeeklyActivity}}
+                    <div class="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
+                        <span class="text-sm font-medium">{{.Date}}</span>
+                        <div class="flex items-center gap-4">
+                            <span class="text-xs text-blue-600">{{.Items}} items</span>
+                            <span class="text-xs text-green-600">{{.Chores}} chores</span>
+                        </div>
+                    </div>
+                    {{end}}
+                </div>
+                {{else}}
+                <p class="text-gray-500 text-center py-4">No activity data available yet.</p>
+                {{end}}
             </div>
         </div>
         {{end}}
