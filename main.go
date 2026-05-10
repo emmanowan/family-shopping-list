@@ -144,6 +144,7 @@ func main() {
 	http.HandleFunc("/chores/delete", handleChoreDelete)
 	http.HandleFunc("/news", handleNews)
 	http.HandleFunc("/analytics", handleAnalytics)
+	http.HandleFunc("/pacman", handlePacman)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -848,6 +849,16 @@ func handleAnalytics(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func handlePacman(w http.ResponseWriter, r *http.Request) {
+	data := PageData{
+		PageType: "pacman",
+	}
+
+	if err := tmpl.Execute(w, data); err != nil {
+		http.Error(w, "template error", http.StatusInternalServerError)
+	}
+}
+
 func calculateAnalytics() (*AnalyticsData, error) {
 	analytics := &AnalyticsData{}
 
@@ -1165,6 +1176,16 @@ const htmlTemplate = `
             </div>
             <h1 class="text-4xl font-bold text-gray-800 mb-2">Family Analytics</h1>
             <p class="text-gray-600">Insights and patterns from your family activities</p>
+            {{else if eq .PageType "pacman"}}
+            <div class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-yellow-400 to-orange-500 rounded-2xl mb-4 shadow-lg">
+                <svg class="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/>
+                    <path d="M12 6v6l4 2"/>
+                    <circle cx="12" cy="12" r="3"/>
+                </svg>
+            </div>
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">Pac-Man Arcade</h1>
+            <p class="text-gray-600">Classic arcade game fun for the whole family</p>
             {{else}}
             <div class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl mb-4 shadow-lg">
                 <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1189,6 +1210,9 @@ const htmlTemplate = `
             </a>
             <a href="/analytics" class="px-6 py-2 bg-white rounded-full shadow-md text-gray-700 hover:bg-orange-50 hover:text-orange-600 transition-colors {{if eq .PageType "analytics"}}bg-orange-100 text-orange-700{{end}}">
                 📊 Analytics
+            </a>
+            <a href="/pacman" class="px-6 py-2 bg-white rounded-full shadow-md text-gray-700 hover:bg-yellow-50 hover:text-yellow-600 transition-colors {{if eq .PageType "pacman"}}bg-yellow-100 text-yellow-700{{end}}">
+                🎮 Pac-Man
             </a>
         </nav>
 
@@ -1816,6 +1840,93 @@ const htmlTemplate = `
                 {{end}}
             </div>
         </div>
+        {{else if eq .PageType "pacman"}}
+        <!-- Pac-Man Game Page -->
+        <div class="max-w-4xl mx-auto">
+            <div class="bg-black rounded-2xl shadow-2xl p-6 border-4 border-yellow-400">
+                <!-- Game Header -->
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-4">
+                        <div class="text-yellow-400 font-bold text-xl">SCORE: <span id="score">0</span></div>
+                        <div class="text-yellow-400 font-bold text-xl">LIVES: <span id="lives">3</span></div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button id="startBtn" class="px-4 py-2 bg-green-600 text-white font-bold rounded hover:bg-green-700 transition-colors">
+                            START GAME
+                        </button>
+                        <button id="pauseBtn" class="px-4 py-2 bg-yellow-600 text-white font-bold rounded hover:bg-yellow-700 transition-colors">
+                            PAUSE
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Game Canvas -->
+                <div class="relative bg-black rounded-lg overflow-hidden">
+                    <canvas id="gameCanvas" width="600" height="400" class="w-full border-2 border-blue-600"></canvas>
+                    
+                    <!-- Game Over Overlay -->
+                    <div id="gameOverlay" class="absolute inset-0 bg-black bg-opacity-80 flex items-center justify-center hidden">
+                        <div class="text-center">
+                            <h2 id="gameTitle" class="text-4xl font-bold text-yellow-400 mb-4">GAME OVER</h2>
+                            <p id="gameMessage" class="text-white text-xl mb-4">Final Score: 0</p>
+                            <button id="restartBtn" class="px-6 py-3 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition-colors">
+                                PLAY AGAIN
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Controls Info -->
+                <div class="mt-4 grid md:grid-cols-2 gap-4">
+                    <div class="bg-gray-900 rounded-lg p-4 border border-gray-700">
+                        <h3 class="text-yellow-400 font-bold mb-2">🎮 Controls</h3>
+                        <div class="text-gray-300 text-sm space-y-1">
+                            <p>↑ ↓ ← → Arrow Keys or WASD to move</p>
+                            <p>SPACE to pause/resume</p>
+                            <p>Touch controls on mobile devices</p>
+                        </div>
+                    </div>
+                    <div class="bg-gray-900 rounded-lg p-4 border border-gray-700">
+                        <h3 class="text-yellow-400 font-bold mb-2">🎯 Objectives</h3>
+                        <div class="text-gray-300 text-sm space-y-1">
+                            <p>🟡 Eat all dots to advance</p>
+                            <p>🍒 Grab cherries for bonus points</p>
+                            <p>👻 Avoid ghosts or lose a life</p>
+                            <p>⭐ Get high scores!</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- High Scores -->
+                <div class="mt-4 bg-gray-900 rounded-lg p-4 border border-gray-700">
+                    <h3 class="text-yellow-400 font-bold mb-2">🏆 High Scores</h3>
+                    <div id="highScores" class="text-gray-300 text-sm space-y-1">
+                        <div class="flex justify-between">
+                            <span>1. Player</span>
+                            <span>0</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>2. Player</span>
+                            <span>0</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>3. Player</span>
+                            <span>0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Mobile Touch Controls -->
+            <div class="md:hidden mt-4 grid grid-cols-3 gap-2 max-w-xs mx-auto">
+                <div></div>
+                <button class="touch-control bg-gray-800 text-white p-4 rounded-lg" data-direction="up">↑</button>
+                <div></div>
+                <button class="touch-control bg-gray-800 text-white p-4 rounded-lg" data-direction="left">←</button>
+                <button class="touch-control bg-gray-800 text-white p-4 rounded-lg" data-direction="down">↓</button>
+                <button class="touch-control bg-gray-800 text-white p-4 rounded-lg" data-direction="right">→</button>
+            </div>
+        </div>
         {{end}}
 
         <!-- Footer -->
@@ -1836,5 +1947,375 @@ const htmlTemplate = `
         </footer>
     </div>
 </body>
-</html>
-`
+{{if eq .PageType "pacman"}}
+        // Pac-Man Game JavaScript
+        <script>
+        class PacManGame {
+            constructor() {
+                this.canvas = document.getElementById('gameCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.score = 0;
+                this.lives = 3;
+                this.gameRunning = false;
+                this.gamePaused = false;
+                this.highScores = this.loadHighScores();
+                
+                // Game entities
+                this.pacman = { x: 300, y: 200, size: 15, speed: 2, direction: 'right' };
+                this.ghosts = [];
+                this.dots = [];
+                this.powerPellets = [];
+                this.cherries = [];
+                
+                // Maze layout (simplified)
+                this.maze = this.generateMaze();
+                
+                this.init();
+            }
+            
+            init() {
+                this.setupEventListeners();
+                this.generateDots();
+                this.generateGhosts();
+                this.updateUI();
+            }
+            
+            setupEventListeners() {
+                // Keyboard controls
+                document.addEventListener('keydown', (e) => this.handleKeyPress(e));
+                
+                // Button controls
+                document.getElementById('startBtn').addEventListener('click', () => this.startGame());
+                document.getElementById('pauseBtn').addEventListener('click', () => this.togglePause());
+                document.getElementById('restartBtn').addEventListener('click', () => this.restartGame());
+                
+                // Touch controls
+                document.querySelectorAll('.touch-control').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        const direction = e.target.dataset.direction;
+                        this.changeDirection(direction);
+                    });
+                });
+            }
+            
+            handleKeyPress(e) {
+                if (!this.gameRunning || this.gamePaused) return;
+                
+                switch(e.key.toLowerCase()) {
+                    case 'arrowup':
+                    case 'w':
+                        this.changeDirection('up');
+                        break;
+                    case 'arrowdown':
+                    case 's':
+                        this.changeDirection('down');
+                        break;
+                    case 'arrowleft':
+                    case 'a':
+                        this.changeDirection('left');
+                        break;
+                    case 'arrowright':
+                    case 'd':
+                        this.changeDirection('right');
+                        break;
+                    case ' ':
+                        this.togglePause();
+                        break;
+                }
+            }
+            
+            changeDirection(direction) {
+                this.pacman.direction = direction;
+            }
+            
+            generateMaze() {
+                // Simple maze representation
+                const maze = [];
+                for (let y = 0; y < 20; y++) {
+                    maze[y] = [];
+                    for (let x = 0; x < 30; x++) {
+                        maze[y][x] = 0; // 0 = empty, 1 = wall
+                    }
+                }
+                
+                // Add some walls
+                for (let i = 5; i < 10; i++) {
+                    maze[5][i] = 1;
+                    maze[14][i] = 1;
+                    maze[i][5] = 1;
+                    maze[i][24] = 1;
+                }
+                
+                return maze;
+            }
+            
+            generateDots() {
+                this.dots = [];
+                for (let y = 0; y < 20; y++) {
+                    for (let x = 0; x < 30; x++) {
+                        if (this.maze[y][x] === 0 && Math.random() > 0.7) {
+                            this.dots.push({ x: x * 20, y: y * 20, size: 3 });
+                        }
+                    }
+                }
+            }
+            
+            generateGhosts() {
+                this.ghosts = [
+                    { x: 100, y: 100, size: 15, speed: 1.5, color: '#ff0000', direction: 'right' },
+                    { x: 500, y: 100, size: 15, speed: 1.5, color: '#00ffff', direction: 'left' },
+                    { x: 100, y: 300, size: 15, speed: 1.5, color: '#ffb8ff', direction: 'right' },
+                    { x: 500, y: 300, size: 15, speed: 1.5, color: '#ffb852', direction: 'left' }
+                ];
+            }
+            
+            startGame() {
+                this.gameRunning = true;
+                this.gamePaused = false;
+                this.score = 0;
+                this.lives = 3;
+                this.pacman = { x: 300, y: 200, size: 15, speed: 2, direction: 'right' };
+                this.generateDots();
+                this.generateGhosts();
+                this.hideOverlay();
+                this.gameLoop();
+            }
+            
+            togglePause() {
+                if (!this.gameRunning) return;
+                this.gamePaused = !this.gamePaused;
+                if (!this.gamePaused) {
+                    this.gameLoop();
+                }
+            }
+            
+            restartGame() {
+                this.startGame();
+            }
+            
+            gameLoop() {
+                if (!this.gameRunning || this.gamePaused) return;
+                
+                this.update();
+                this.render();
+                this.checkCollisions();
+                
+                requestAnimationFrame(() => this.gameLoop());
+            }
+            
+            update() {
+                // Update Pac-Man position
+                this.movePacman();
+                
+                // Update ghosts
+                this.moveGhosts();
+                
+                // Update UI
+                this.updateUI();
+            }
+            
+            movePacman() {
+                const speed = this.pacman.speed;
+                switch(this.pacman.direction) {
+                    case 'up':
+                        this.pacman.y -= speed;
+                        break;
+                    case 'down':
+                        this.pacman.y += speed;
+                        break;
+                    case 'left':
+                        this.pacman.x -= speed;
+                        break;
+                    case 'right':
+                        this.pacman.x += speed;
+                        break;
+                }
+                
+                // Keep Pac-Man in bounds
+                this.pacman.x = Math.max(this.pacman.size, Math.min(this.canvas.width - this.pacman.size, this.pacman.x));
+                this.pacman.y = Math.max(this.pacman.size, Math.min(this.canvas.height - this.pacman.size, this.pacman.y));
+            }
+            
+            moveGhosts() {
+                this.ghosts.forEach(ghost => {
+                    // Simple AI: move towards Pac-Man sometimes, random other times
+                    if (Math.random() > 0.5) {
+                        // Move towards Pac-Man
+                        if (ghost.x < this.pacman.x) ghost.x += ghost.speed;
+                        else if (ghost.x > this.pacman.x) ghost.x -= ghost.speed;
+                        
+                        if (ghost.y < this.pacman.y) ghost.y += ghost.speed;
+                        else if (ghost.y > this.pacman.y) ghost.y -= ghost.speed;
+                    } else {
+                        // Random movement
+                        const directions = ['up', 'down', 'left', 'right'];
+                        const dir = directions[Math.floor(Math.random() * 4)];
+                        
+                        switch(dir) {
+                            case 'up': ghost.y -= ghost.speed; break;
+                            case 'down': ghost.y += ghost.speed; break;
+                            case 'left': ghost.x -= ghost.speed; break;
+                            case 'right': ghost.x += ghost.speed; break;
+                        }
+                    }
+                    
+                    // Keep ghosts in bounds
+                    ghost.x = Math.max(ghost.size, Math.min(this.canvas.width - ghost.size, ghost.x));
+                    ghost.y = Math.max(ghost.size, Math.min(this.canvas.height - ghost.size, ghost.y));
+                });
+            }
+            
+            checkCollisions() {
+                // Check dot collection
+                this.dots = this.dots.filter(dot => {
+                    const distance = Math.sqrt(
+                        Math.pow(this.pacman.x - dot.x, 2) + 
+                        Math.pow(this.pacman.y - dot.y, 2)
+                    );
+                    
+                    if (distance < this.pacman.size + dot.size) {
+                        this.score += 10;
+                        return false; // Remove dot
+                    }
+                    return true; // Keep dot
+                });
+                
+                // Check ghost collision
+                this.ghosts.forEach(ghost => {
+                    const distance = Math.sqrt(
+                        Math.pow(this.pacman.x - ghost.x, 2) + 
+                        Math.pow(this.pacman.y - ghost.y, 2)
+                    );
+                    
+                    if (distance < this.pacman.size + ghost.size) {
+                        this.loseLife();
+                    }
+                });
+                
+                // Check win condition
+                if (this.dots.length === 0) {
+                    this.nextLevel();
+                }
+            }
+            
+            loseLife() {
+                this.lives--;
+                if (this.lives <= 0) {
+                    this.gameOver();
+                } else {
+                    // Reset positions
+                    this.pacman = { x: 300, y: 200, size: 15, speed: 2, direction: 'right' };
+                }
+            }
+            
+            nextLevel() {
+                this.score += 100;
+                this.generateDots();
+                this.generateGhosts();
+                // Increase difficulty
+                this.ghosts.forEach(ghost => ghost.speed *= 1.1);
+            }
+            
+            gameOver() {
+                this.gameRunning = false;
+                this.saveHighScore();
+                this.showOverlay('GAME OVER', 'Final Score: ' + this.score);
+            }
+            
+            render() {
+                // Clear canvas
+                this.ctx.fillStyle = '#000000';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // Draw maze (simplified)
+                this.ctx.fillStyle = '#0000ff';
+                for (let y = 0; y < 20; y++) {
+                    for (let x = 0; x < 30; x++) {
+                        if (this.maze[y][x] === 1) {
+                            this.ctx.fillRect(x * 20, y * 20, 20, 20);
+                        }
+                    }
+                }
+                
+                // Draw dots
+                this.ctx.fillStyle = '#ffffff';
+                this.dots.forEach(dot => {
+                    this.ctx.beginPath();
+                    this.ctx.arc(dot.x, dot.y, dot.size, 0, Math.PI * 2);
+                    this.ctx.fill();
+                });
+                
+                // Draw Pac-Man
+                this.ctx.fillStyle = '#ffff00';
+                this.ctx.beginPath();
+                this.ctx.arc(this.pacman.x, this.pacman.y, this.pacman.size, 0.2 * Math.PI, 1.8 * Math.PI);
+                this.ctx.lineTo(this.pacman.x, this.pacman.y);
+                this.ctx.fill();
+                
+                // Draw ghosts
+                this.ghosts.forEach(ghost => {
+                    this.ctx.fillStyle = ghost.color;
+                    this.ctx.beginPath();
+                    this.ctx.arc(ghost.x, ghost.y, ghost.size, Math.PI, 0);
+                    this.ctx.lineTo(ghost.x + ghost.size, ghost.y + ghost.size);
+                    this.ctx.lineTo(ghost.x - ghost.size, ghost.y + ghost.size);
+                    this.ctx.closePath();
+                    this.ctx.fill();
+                    
+                    // Ghost eyes
+                    this.ctx.fillStyle = '#ffffff';
+                    this.ctx.beginPath();
+                    this.ctx.arc(ghost.x - 5, ghost.y - 5, 3, 0, Math.PI * 2);
+                    this.ctx.arc(ghost.x + 5, ghost.y - 5, 3, 0, Math.PI * 2);
+                    this.ctx.fill();
+                });
+            }
+            
+            updateUI() {
+                document.getElementById('score').textContent = this.score;
+                document.getElementById('lives').textContent = this.lives;
+            }
+            
+            showOverlay(title, message) {
+                document.getElementById('gameTitle').textContent = title;
+                document.getElementById('gameMessage').textContent = message;
+                document.getElementById('gameOverlay').classList.remove('hidden');
+            }
+            
+            hideOverlay() {
+                document.getElementById('gameOverlay').classList.add('hidden');
+            }
+            
+            loadHighScores() {
+                const scores = localStorage.getItem('pacmanHighScores');
+                return scores ? JSON.parse(scores) : [];
+            }
+            
+            saveHighScore() {
+                this.highScores.push({ score: this.score, date: new Date().toLocaleDateString() });
+                this.highScores.sort((a, b) => b.score - a.score);
+                this.highScores = this.highScores.slice(0, 5);
+                localStorage.setItem('pacmanHighScores', JSON.stringify(this.highScores));
+                this.updateHighScoresDisplay();
+            }
+            
+            updateHighScoresDisplay() {
+                const scoresContainer = document.getElementById('highScores');
+                scoresContainer.innerHTML = this.highScores.map((score, index) => 
+                    '<div class="flex justify-between">' +
+                        '<span>' + (index + 1) + '. Player</span>' +
+                        '<span>' + score.score + '</span>' +
+                    '</div>'
+                ).join('');
+            }
+        }
+
+        // Initialize game when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new PacManGame();
+        });
+        </script>
+        {{end}}
+        </body>
+        </html>
+        `
