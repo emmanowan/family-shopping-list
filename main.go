@@ -2618,9 +2618,18 @@ const htmlTemplate = `
         }
 
         // Initialize AIFIL when page loads
+        let aifilInstance;
         document.addEventListener('DOMContentLoaded', () => {
-            new Aifil();
+            aifilInstance = new Aifil();
         });
+        
+        function sendMessage() {
+            if (aifilInstance) aifilInstance.sendMessage();
+        }
+        
+        function tellJoke() {
+            if (aifilInstance) aifilInstance.tellJoke();
+        }
         </script>
         {{end}}
         </body>
