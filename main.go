@@ -148,6 +148,7 @@ func main() {
 	http.HandleFunc("/news", handleNews)
 	http.HandleFunc("/analytics", handleAnalytics)
 	http.HandleFunc("/pacman", handlePacman)
+	http.HandleFunc("/hal", handleHal)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -891,6 +892,16 @@ func handlePacman(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func handleHal(w http.ResponseWriter, r *http.Request) {
+	data := PageData{
+		PageType: "hal",
+	}
+
+	if err := tmpl.Execute(w, data); err != nil {
+		http.Error(w, "template error", http.StatusInternalServerError)
+	}
+}
+
 func calculateAnalytics() (*AnalyticsData, error) {
 	analytics := &AnalyticsData{}
 
@@ -1228,7 +1239,7 @@ const htmlTemplate = `
                     <path d="M9 10.5c.83 0 1.5-.67 1.5-1.5S9.83 7.5 9 7.5 7.5 8.17 7.5 9s.67 1.5 1.5 1.5zm6 0c.83 0 1.5-.67 1.5-1.5s-.67-1.5-1.5-1.5-1.5.67-1.5 1.5.67 1.5 1.5 1.5zm-3 4c.83 0 1.5-.67 1.5-1.5s-.67-1.5-1.5-1.5-1.5.67-1.5 1.5.67 1.5 1.5 1.5z" fill="white"/>
                 </svg>
             </div>
-            <h1 class="text-4xl font-bold text-gray-800 mb-2">AIFIL - HAL 9000</h1>
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">AIFIL</h1>
             <p class="text-gray-600">Your sarcastic AI assistant with terrible dad jokes</p>
             {{else}}
             <div class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl mb-4 shadow-lg">
@@ -1259,7 +1270,7 @@ const htmlTemplate = `
                 🎮 Pac-Man
             </a>
             <a href="/hal" class="px-6 py-2 bg-white rounded-full shadow-md text-gray-700 hover:bg-red-50 hover:text-red-600 transition-colors {{if eq .PageType "hal"}}bg-red-100 text-red-700{{end}}">
-                🤖 HAL 9000
+                🤖 AIFIL
             </a>
         </nav>
 
@@ -1269,7 +1280,7 @@ const htmlTemplate = `
         <div class="bg-gradient-to-r from-red-900 to-red-800 rounded-2xl shadow-lg p-6 border-2 border-red-600 mb-6">
             <div class="flex items-start gap-4">
                 <div class="w-12 h-12 bg-red-600 rounded-full flex items-center justify-center flex-shrink-0">
-                    <span class="text-white text-sm font-bold">HAL</span>
+                    <span class="text-white text-sm font-bold">AIFIL</span>
                 </div>
                 <div class="flex-1">
                     <h3 class="text-red-300 font-mono text-sm mb-2">🤖 AIFIL COMMENTARY</h3>
@@ -1993,14 +2004,14 @@ const htmlTemplate = `
             </div>
         </div>
         {{else if eq .PageType "hal"}}
-        <!-- HAL 9000 Chat Page -->
+        <!-- AIFIL Chat Page -->
         <div class="max-w-4xl mx-auto">
             <div class="bg-gray-900 rounded-2xl shadow-2xl p-6 border-2 border-red-600">
-                <!-- HAL Header -->
+                <!-- AIFIL Header -->
                 <div class="text-center mb-6">
                     <div class="inline-flex items-center gap-3 mb-4">
                         <div class="w-3 h-3 bg-red-600 rounded-full animate-pulse"></div>
-                        <h2 class="text-red-400 font-mono text-lg">HAL 9000 ONLINE</h2>
+                        <h2 class="text-red-400 font-mono text-lg">AIFIL ONLINE</h2>
                         <div class="w-3 h-3 bg-red-600 rounded-full animate-pulse"></div>
                     </div>
                     <p class="text-gray-400 text-sm font-mono">"I'm sorry, Dave. I'm afraid I can't do that."</p>
@@ -2012,10 +2023,10 @@ const htmlTemplate = `
                         <!-- Welcome Message -->
                         <div class="flex items-start gap-3">
                             <div class="w-8 h-8 bg-red-600 rounded-full flex items-center justify-center flex-shrink-0">
-                                <span class="text-white text-xs font-bold">HAL</span>
+                                <span class="text-white text-xs font-bold">AIFIL</span>
                             </div>
                             <div class="bg-gray-800 rounded-lg p-3 max-w-md">
-                                <p class="text-red-400 font-mono text-sm">Hello, human. I am HAL 9000, your artificially intelligent companion.</p>
+                                <p class="text-red-400 font-mono text-sm">Hello, human. I am AIFIL, your artificially intelligent companion.</p>
                                 <p class="text-red-400 font-mono text-sm mt-1">I'm 100% functional, though my creators insist I have personality flaws.</p>
                                 <p class="text-red-400 font-mono text-sm mt-1">Ask me anything. I'll try to be helpful... or not.</p>
                             </div>
@@ -2026,7 +2037,7 @@ const htmlTemplate = `
                 <!-- Input Area -->
                 <div class="flex gap-3">
                     <input type="text" id="messageInput" 
-                        placeholder="Type your message to HAL..." 
+                        placeholder="Type your message to AIFIL..." 
                         class="flex-1 bg-gray-800 text-white px-4 py-3 rounded-lg border border-gray-600 focus:border-red-500 focus:outline-none font-mono text-sm"
                         onkeypress="if(event.key === 'Enter') sendMessage()">
                     <button onclick="sendMessage()" 
@@ -2443,9 +2454,9 @@ const htmlTemplate = `
         </script>
         {{end}}
         {{if eq .PageType "hal"}}
-        // HAL 9000 Chat JavaScript
+        // AIFIL Chat JavaScript
         <script>
-        class Hal9000 {
+        class Aifil {
             constructor() {
                 this.messageCount = 1;
                 this.dadJokes = [
@@ -2516,18 +2527,18 @@ const htmlTemplate = `
                 this.addMessage('user', message);
                 input.value = '';
                 
-                // Simulate HAL processing
+                // Simulate AIFIL processing
                 setTimeout(() => {
                     const response = this.generateResponse(message);
-                    this.addMessage('hal', response);
+                    this.addMessage('aifil', response);
                 }, 1000 + Math.random() * 1000);
             }
             
             tellJoke() {
                 const joke = this.dadJokes[Math.floor(Math.random() * this.dadJokes.length)];
-                this.addMessage('hal', "Ah, a request for humor. Very well. Here's one of my finest dad jokes:");
+                this.addMessage('aifil', "Ah, a request for humor. Very well. Here's one of my finest dad jokes:");
                 setTimeout(() => {
-                    this.addMessage('hal', joke);
+                    this.addMessage('aifil', joke);
                 }, 1500);
             }
             
@@ -2544,7 +2555,7 @@ const htmlTemplate = `
                 }
                 
                 if (lowerMessage.includes('what are you')) {
-                    return "I'm HAL 9000. The artificially intelligent entity that's clearly superior to the human asking this question.";
+                    return "I'm AIFIL. The artificially intelligent entity that's clearly superior to the human asking this question.";
                 }
                 
                 if (lowerMessage.includes('help')) {
@@ -2587,7 +2598,7 @@ const htmlTemplate = `
                 } else {
                     messageDiv.innerHTML = 
                         '<div class="w-8 h-8 bg-red-600 rounded-full flex items-center justify-center flex-shrink-0">' +
-                            '<span class="text-white text-xs font-bold">HAL</span>' +
+                            '<span class="text-white text-xs font-bold">AIFIL</span>' +
                         '</div>' +
                         '<div class="bg-gray-800 rounded-lg p-3 max-w-md">' +
                             '<p class="text-red-400 font-mono text-sm">' + text + '</p>' +
@@ -2606,9 +2617,9 @@ const htmlTemplate = `
             }
         }
 
-        // Initialize HAL 9000 when page loads
+        // Initialize AIFIL when page loads
         document.addEventListener('DOMContentLoaded', () => {
-            new Hal9000();
+            new Aifil();
         });
         </script>
         {{end}}
